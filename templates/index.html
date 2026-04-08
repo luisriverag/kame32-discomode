@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kame32 3D Preview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #141b22;
+      --panel-2: #1a232d;
+      --text: #e8eef5;
+      --muted: #9eb0c3;
+      --accent: #60a5fa;
+      --border: #2b3948;
+      --good: #34d399;
+      --warn: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      min-height: 100vh;
+    }
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: linear-gradient(180deg, #111923, #0d141b);
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .viewer {
+      position: relative;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #182333 0%, #0b0f14 58%);
+    }
+    #scene {
+      width: 100%;
+      height: 100vh;
+      display: block;
+    }
+    h1 { margin: 0 0 6px; font-size: 1.45rem; }
+    h2 { margin: 18px 0 10px; font-size: 1rem; }
+    p, li { color: var(--muted); line-height: 1.4; }
+    .card {
+      background: rgba(20, 27, 34, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 14px;
+      backdrop-filter: blur(8px);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .row3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    input[type="range"], input[type="number"], select, textarea {
+      width: 100%;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    textarea {
+      min-height: 180px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.82rem;
+    }
+    button {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: #17304f; border-color: #2d5f98; }
+    button.good { background: #15332a; border-color: #1f6b54; }
+    .speed-presets {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .speed-presets button.active {
+      background: #17304f;
+      border-color: #2d5f98;
+      color: #fff;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(26, 35, 45, 0.9);
+      border: 1px solid var(--border);
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+    .meter {
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      bottom: 18px;
+      background: rgba(8, 11, 16, 0.86);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      backdrop-filter: blur(8px);
+    }
+    .meter-grid {
+      display: grid;
+      grid-template-columns: 1fr 120px;
+      gap: 14px;
+      align-items: center;
+    }
+    .range-readout {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .servo-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .servo-value { font-size: 0.8rem; color: var(--muted); text-align: right; }
+    .tiny { font-size: 0.8rem; color: var(--muted); }
+    .status {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      background: rgba(8, 11, 16, 0.86);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 0.88rem;
+      color: var(--muted);
+      max-width: 320px;
+    }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .viewer, #scene { min-height: 70vh; height: 70vh; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1>Kame32 3D Preview</h1>
+      <p>Preview joystick gait, button-style routines, or direct servo keyframes before you send anything to the robot.</p>
+
+      <div class="card">
+        <div class="badge">Stock joystick gait math</div>
+        <div class="badge">3D browser preview</div>
+        <div class="badge">JSON timeline import</div>
+        <div class="badge">MP3 → dance analysis</div>
+      </div>
+
+      <div class="card">
+        <h2>Load MP3 and auto-build dance</h2>
+        <label for="audioFile">Audio file</label>
+        <input id="audioFile" type="file" accept=".mp3,audio/*">
+        <div class="row" style="margin-top: 10px;">
+          <button id="analyzeAudioBtn" class="primary">Analyze audio into dance</button>
+          <button id="clearAudioBtn">Clear audio</button>
+        </div>
+        <audio id="audioPreview" controls hidden style="width: 100%; margin-top: 10px;"></audio>
+        <p class="tiny" id="audioMeta">Choose an MP3, then the server will extract beats and load an event timeline for preview.</p>
+      </div>
+
+      <div class="card">
+        <h2>Playback</h2>
+        <div class="row3">
+          <button id="playBtn" class="primary">Play</button>
+          <button id="pauseBtn">Pause</button>
+          <button id="resetBtn">Reset</button>
+        </div>
+        <div style="margin-top: 10px;">
+          <label for="timelineSlider">Timeline</label>
+          <input id="timelineSlider" type="range" min="0" max="12" step="0.01" value="0">
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <div>
+            <label for="speed">Playback speed</label>
+            <input id="speed" type="number" min="0.25" max="3" step="0.05" value="1.0">
+            <div class="speed-presets">
+              <button type="button" data-speed-preset="1" class="active">100%</button>
+              <button type="button" data-speed-preset="0.5">50%</button>
+              <button type="button" data-speed-preset="0.25">25%</button>
+            </div>
+            <p class="tiny">In audio-sync mode, the music and movement timeline are slowed together.</p>
+          </div>
+          <div>
+            <label for="modeSelect">Source</label>
+            <select id="modeSelect">
+              <option value="joystick">Live joystick</option>
+              <option value="button">Button routine</option>
+              <option value="pose">Manual pose</option>
+              <option value="events">Event timeline JSON</option>
+              <option value="keyframes">Keyframe JSON</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="joystickCard">
+        <h2>Joystick gait</h2>
+        <div class="row">
+          <div>
+            <label for="joyX">Turn / x</label>
+            <input id="joyX" type="range" min="-100" max="100" step="1" value="0">
+            <div class="servo-value"><span id="joyXValue">0</span></div>
+          </div>
+          <div>
+            <label for="joyY">Forward / y</label>
+            <input id="joyY" type="range" min="-100" max="100" step="1" value="0">
+            <div class="servo-value"><span id="joyYValue">0</span></div>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <div>
+            <label for="period">Period (ms)</label>
+            <input id="period" type="number" min="150" max="1200" step="10" value="450">
+          </div>
+          <div>
+            <label for="stepHeight">Step height</label>
+            <input id="stepHeight" type="number" min="0" max="60" step="1" value="20">
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <div>
+            <label for="legSpread">Leg spread</label>
+            <input id="legSpread" type="number" min="0" max="40" step="1" value="20">
+          </div>
+          <div>
+            <label for="bodyHeight">Body height</label>
+            <input id="bodyHeight" type="number" min="0" max="45" step="1" value="10">
+          </div>
+        </div>
+        <p class="tiny">This mode mirrors the stock gait parameters and phase arrays from the current Kame32 gamepad firmware.</p>
+      </div>
+
+      <div class="card" id="buttonCard" hidden>
+        <h2>Button routine</h2>
+        <div class="row3">
+          <button data-button="A">A / hello</button>
+          <button data-button="B">B / jump</button>
+          <button data-button="X">X / dance</button>
+          <button data-button="Y">Y / moonwalk</button>
+          <button data-button="Z">Z / frontBack</button>
+          <button data-button="Stop">Stop</button>
+        </div>
+        <p class="tiny">Button routines are visual approximations so you can audition overall motion. Joystick gait is the most faithful mode.</p>
+      </div>
+
+      <div class="card" id="poseCard" hidden>
+        <h2>Manual servo pose</h2>
+        <div class="servo-grid" id="servoSliders"></div>
+      </div>
+
+      <div class="card" id="eventsCard" hidden>
+        <h2>Event timeline JSON</h2>
+        <p class="tiny">Paste an array of events using the same shape as the MP3 script: <code>{"t": 1.2, "kind": "joystick", "payload": [0, 70]}</code>.</p>
+        <textarea id="eventsJson"></textarea>
+        <div class="row" style="margin-top: 10px;">
+          <button id="loadEventsBtn" class="primary">Load event timeline</button>
+          <button id="demoEventsBtn">Load demo</button>
+        </div>
+      </div>
+
+      <div class="card" id="keyframesCard" hidden>
+        <h2>Keyframe JSON</h2>
+        <p class="tiny">Paste <code>[{"t":0,"pose":{"s0":90,...}}, ...]</code>. The preview interpolates between frames.</p>
+        <textarea id="keyframesJson"></textarea>
+        <div class="row" style="margin-top: 10px;">
+          <button id="loadKeyframesBtn" class="primary">Load keyframes</button>
+          <button id="demoKeyframesBtn">Load demo</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Servo map used here</h2>
+        <ul>
+          <li>s0 front-left hip</li>
+          <li>s1 front-right hip</li>
+          <li>s2 front-left knee</li>
+          <li>s3 front-right knee</li>
+          <li>s4 rear-right hip</li>
+          <li>s5 rear-left hip</li>
+          <li>s6 rear-left knee</li>
+          <li>s7 rear-right knee</li>
+        </ul>
+        <p class="tiny">The hip/knee split comes directly from the firmware. The leg labels are a practical preview mapping you can adjust inside <code>static/app.js</code> if your physical build differs.</p>
+      </div>
+    </aside>
+
+    <main class="viewer">
+      <canvas id="scene"></canvas>
+      <div class="status" id="statusBox">Ready.</div>
+      <div class="meter">
+        <div class="meter-grid">
+          <div>
+            <input id="transportSlider" type="range" min="0" max="12" step="0.01" value="0">
+            <div class="range-readout" id="servoReadout"></div>
+          </div>
+          <div>
+            <div class="tiny">Time</div>
+            <div id="timeLabel" style="font-size: 1.5rem; font-weight: 700;">0.00s</div>
+            <div id="durationLabel" class="tiny">Duration 12.00s</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
