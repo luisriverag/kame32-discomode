@@ -609,6 +609,8 @@ async function analyzeSelectedAudio() {
     return;
   }
 
+  analyzeAudioBtn.disabled = true;
+
   if (audioPreview.dataset.objectUrl) {
     URL.revokeObjectURL(audioPreview.dataset.objectUrl);
   }
@@ -625,7 +627,8 @@ async function analyzeSelectedAudio() {
 
   try {
     const response = await fetch('/api/analyze-audio', { method: 'POST', body: formData });
-    const data = await response.json();
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : { error: await response.text() };
     if (!response.ok) throw new Error(data.error || 'Analysis failed.');
 
     state.analyzedAudio = data;
@@ -642,6 +645,8 @@ async function analyzeSelectedAudio() {
     state.audioSyncEnabled = false;
     setStatus(`Audio analysis failed: ${err.message}`);
     audioMeta.textContent = `Analysis failed for ${file.name}.`;
+  } finally {
+    analyzeAudioBtn.disabled = false;
   }
 }
 
