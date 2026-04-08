@@ -855,3 +855,5 @@ requestAnimationFrame((now) => {
   lastFrame = now;
   animate(now);
 });
+
+window.__kameAppReady = true;
