@@ -1,0 +1,111 @@
+
+# Kame32 3D Preview
+
+A small Flask web app that previews Kame32 movements in 3D.
+
+## Features
+
+- Live joystick gait preview based on the current stock Kame32 gamepad firmware parameters
+- Button-routine previews for A / B / X / Y / Z
+- Manual 8-servo pose editing
+- Event timeline JSON import
+- Keyframe JSON import with interpolation
+- MP3/audio upload that analyzes beats and auto-builds a dance event timeline for preview
+- Optional browser audio playback synced to the preview timeline
+- Quick playback presets for 100%, 50%, and 25% speed, with music and move timing slowed together in audio-sync mode
+- Direct event streaming to Kame over Wi-Fi (`http://192.168.4.1`) after preview
+- Adjustable robot send speed (100% / 75% / 50% / 25%) for slower live dispatch when needed
+- Resilient 3D loader that tries multiple CDNs (jsDelivr then unpkg) before falling back to built-in 2D preview
+
+## Run
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
+
+Then open http://127.0.0.1:5000
+
+## MP3 workflow
+
+1. Open the app in your browser.
+2. In **Load MP3 and auto-build dance**, pick an MP3.
+3. Click **Analyze audio into dance**.
+4. The server extracts beats with `librosa`, generates a Kame32-style event timeline, and switches the viewer to **Event timeline JSON** mode.
+5. Press **Play** to preview it in 3D with the browser audio element as the timeline clock.
+6. Use the **100% / 50% / 25%** speed buttons to audition the same choreography in slow motion; in audio-sync mode both the music and movement timeline slow down together.
+7. In **Event timeline JSON**, choose **Robot send speed** (100/75/50/25%).
+8. Click **Send timeline to robot** to stream events directly to your Kame firmware over HTTP.
+
+## Send-to-robot API
+
+### Endpoint
+
+`POST /api/send-to-robot`
+
+### Request body
+
+```json
+{
+  "base_url": "http://192.168.4.1",
+  "events": [
+    {"t": 0.0, "kind": "button", "payload": "Start"},
+    {"t": 0.2, "kind": "joystick", "payload": [0, 70]},
+    {"t": 1.1, "kind": "joystick", "payload": [0, 0]},
+    {"t": 1.2, "kind": "button", "payload": "Stop"}
+  ],
+  "send_speed": 0.5,
+  "dry_run": false
+}
+```
+
+### `send_speed` behavior
+
+- Range: `0.25` to `1.0`.
+- `1.0` = normal timeline speed.
+- `0.5` = half speed (dispatch timing is stretched to 2× duration).
+- `0.25` = quarter speed (dispatch timing is stretched to 4× duration).
+
+### Dry run
+
+Set `"dry_run": true` to validate payload and timing metadata without dispatching any robot HTTP requests.
+
+## JSON formats
+
+### Event timeline
+
+```json
+[
+  {"t": 0.0, "kind": "button", "payload": "Start"},
+  {"t": 0.2, "kind": "joystick", "payload": [0, 70]},
+  {"t": 1.4, "kind": "button", "payload": "X"},
+  {"t": 3.0, "kind": "joystick", "payload": [0, 0]}
+]
+```
+
+### Keyframes
+
+```json
+[
+  {"t": 0.0, "pose": {"s0": 90, "s1": 90, "s2": 80, "s3": 100, "s4": 90, "s5": 90, "s6": 100, "s7": 80}},
+  {"t": 0.7, "pose": {"s0": 110, "s1": 70, "s2": 75, "s3": 105, "s4": 70, "s5": 110, "s6": 105, "s7": 75}}
+]
+```
+
+## Notes
+
+- The joystick gait uses the same period, leg spread, body height, step height, and phase arrays as the current Kame32 stock gamepad firmware.
+- The button routines are visual approximations for previewing style and timing.
+- The MP3/audio analysis produces a Kame32-style event timeline, not inverse-kinematics choreography.
+- The app tries multiple CDNs for Three.js module loading; if both fail, it automatically falls back to 2D preview so timeline/audio/send workflow can continue.
+- To send directly to hardware, your machine running Flask must be on the Kame AP network and able to reach `192.168.4.1`.
+
+
+## Playback speed behavior
+
+- The numeric **Playback speed** field still accepts custom values from `0.25` to `3.0`.
+- The preset buttons provide one-click **100%**, **50%**, and **25%** playback.
+- In audio-sync mode, the app sets the browser audio element's `playbackRate` and uses the audio clock as the transport, so the music and the move timeline stay aligned while slowed down.
+- In non-audio modes, the preview timeline itself advances at the selected speed.
