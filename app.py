@@ -30,9 +30,18 @@ ROBOT_CALL_TIMEOUT_SEC = 3.0
 _ROBOT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
+def _error_response(message: str, status: int, *, code: str | None = None, details: str | None = None):
+    payload = {'error': message}
+    if code:
+        payload['code'] = code
+    if details:
+        payload['details'] = details
+    return jsonify(payload), status
+
+
 @app.errorhandler(413)
 def request_entity_too_large(_err):
-    return jsonify({'error': 'Uploaded file is too large. Max size is 50 MB.'}), 413
+    return _error_response('Uploaded file is too large. Max size is 50 MB.', 413, code='upload_too_large')
 
 
 DEMO_ROUTINES = {
@@ -296,16 +305,16 @@ def _send_event_timeline_to_robot(events: list[dict], base_url: str) -> dict:
 @app.post('/api/analyze-audio')
 def analyze_audio():
     if 'audio' not in request.files:
-        return jsonify({'error': 'No audio file uploaded. Use form field name "audio".'}), 400
+        return _error_response('No audio file uploaded. Use form field name "audio".', 400, code='missing_audio')
 
     upload = request.files['audio']
     if not upload or not upload.filename:
-        return jsonify({'error': 'No file selected.'}), 400
+        return _error_response('No file selected.', 400, code='missing_filename')
 
     filename = secure_filename(upload.filename)
     suffix = Path(filename).suffix or '.mp3'
     if suffix.lower() not in ALLOWED_AUDIO_SUFFIXES:
-        return jsonify({'error': 'Unsupported audio format. Allowed: mp3, wav, ogg, m4a, flac.'}), 400
+        return _error_response('Unsupported audio format. Allowed: mp3, wav, ogg, m4a, flac.', 400, code='unsupported_audio_format')
 
     temp_path = None
 
@@ -324,7 +333,7 @@ def analyze_audio():
         })
     except Exception:
         app.logger.exception('Audio analysis failed for upload %s', filename)
-        return jsonify({'error': 'Audio analysis failed. Verify the file is a valid, non-corrupt audio clip.'}), 400
+        return _error_response('Audio analysis failed. Verify the file is a valid, non-corrupt audio clip.', 400, code='audio_analysis_failed')
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
@@ -338,7 +347,7 @@ def send_to_robot():
     try:
         events = _validate_robot_events(payload.get('events'))
     except (TypeError, ValueError) as err:
-        return jsonify({'error': f'Invalid event timeline: {err}'}), 400
+        return _error_response(f'Invalid event timeline: {err}', 400, code='invalid_event_timeline')
 
     if dry_run:
         return jsonify({
@@ -354,13 +363,13 @@ def send_to_robot():
         result = future.result(timeout=ROBOT_MAX_SCRIPT_SECONDS + 15.0)
     except FutureTimeoutError:
         app.logger.exception('Robot dispatch timed out for %s events to %s', len(events), base_url)
-        return jsonify({'error': 'Robot dispatch timed out.'}), 504
-    except URLError:
+        return _error_response('Robot dispatch timed out.', 504, code='robot_dispatch_timeout', details=f'Timeline execution exceeded {ROBOT_MAX_SCRIPT_SECONDS + 15.0:.0f}s timeout.')
+    except URLError as err:
         app.logger.exception('Robot dispatch network error to %s', base_url)
-        return jsonify({'error': f'Could not reach robot at {base_url}. Check Wi-Fi and power.'}), 502
-    except Exception:
+        return _error_response(f'Could not reach robot at {base_url}. Check Wi-Fi and power.', 502, code='robot_unreachable', details=str(getattr(err, 'reason', err)))
+    except Exception as err:
         app.logger.exception('Robot dispatch failed for %s events to %s', len(events), base_url)
-        return jsonify({'error': 'Robot dispatch failed unexpectedly.'}), 500
+        return _error_response('Robot dispatch failed unexpectedly.', 500, code='robot_dispatch_failed', details=f'{type(err).__name__}: {err}')
 
     return jsonify({
         'ok': True,

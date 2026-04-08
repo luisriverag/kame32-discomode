@@ -103,6 +103,14 @@ function setStatus(message) {
   statusBox.textContent = message;
 }
 
+function formatApiError(data, fallbackMessage) {
+  const payload = data && typeof data === 'object' ? data : {};
+  const message = (payload.error || payload.message || fallbackMessage || 'Request failed.').toString();
+  const code = payload.code ? ` [${payload.code}]` : '';
+  const details = payload.details ? ` Details: ${payload.details}` : '';
+  return `${message}${code}${details}`;
+}
+
 function setWorkflowStage(stage) {
   const states = {
     analyze: { analyze: 'active', visualize: '', send: '' },
@@ -708,7 +716,10 @@ async function analyzeSelectedAudio() {
     const response = await fetch('/api/analyze-audio', { method: 'POST', body: formData });
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await response.json() : { error: await response.text() };
-    if (!response.ok) throw new Error(data.error || 'Analysis failed.');
+    if (!response.ok) {
+      console.error('Audio analysis failed response:', { status: response.status, data });
+      throw new Error(formatApiError(data, 'Analysis failed.'));
+    }
 
     state.analyzedAudio = data;
     eventsJson.value = JSON.stringify(data.events, null, 2);
@@ -722,6 +733,7 @@ async function analyzeSelectedAudio() {
     setStatus(`Audio analyzed: ${data.tempo.toFixed(1)} BPM, ${data.event_count} events loaded.`);
     setWorkflowStage('visualize');
   } catch (err) {
+    console.error('Audio analysis failed:', err);
     state.analyzedAudio = null;
     state.audioSyncEnabled = false;
     state.audioReady = false;
@@ -751,6 +763,11 @@ function clearAudioState() {
 }
 
 playBtn.addEventListener('click', async () => {
+  if (state.mode === 'events' && state.eventTimeline.length === 0) {
+    setStatus('Play is unavailable: event timeline is empty. Analyze audio or load event JSON first.');
+    return;
+  }
+
   if (usingAudioClock()) {
     try {
       applyPlaybackSpeed(state.speed);
@@ -765,7 +782,8 @@ playBtn.addEventListener('click', async () => {
       state.audioSyncEnabled = false;
       pauseAnyAudio();
       state.playing = true;
-      setStatus(`Could not play audio (${err.message}). Continuing preview without audio sync.`);
+      console.error('Audio playback failed; switching to timeline-only preview.', err);
+      setStatus(`Could not play audio (${err.message}). Audio sync disabled; continuing preview from timeline clock.`);
       setWorkflowStage('visualize');
       return;
     }
@@ -906,10 +924,14 @@ sendToRobotBtn.addEventListener('click', async () => {
     });
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await response.json() : { error: await response.text() };
-    if (!response.ok) throw new Error(data.error || 'Robot dispatch failed.');
+    if (!response.ok) {
+      console.error('Robot dispatch failed response:', { status: response.status, data });
+      throw new Error(formatApiError(data, 'Robot dispatch failed.'));
+    }
     setWorkflowStage('complete');
     setStatus(`Sent ${data.sent ?? parsed.length} events to ${data.base_url || baseUrl} in ${data.elapsed ?? '?'}s.`);
   } catch (err) {
+    console.error('Could not send to robot:', err);
     setStatus(`Could not send to robot: ${err.message}`);
   } finally {
     sendToRobotBtn.disabled = false;
