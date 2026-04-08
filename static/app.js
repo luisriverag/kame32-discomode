@@ -39,6 +39,7 @@ const clearAudioBtn = document.getElementById('clearAudioBtn');
 const audioPreview = document.getElementById('audioPreview');
 const audioMeta = document.getElementById('audioMeta');
 const sendToRobotBtn = document.getElementById('sendToRobotBtn');
+const robotBaseUrlInput = document.getElementById('robotBaseUrl');
 const workflowAnalyze = document.getElementById('workflowAnalyze');
 const workflowVisualize = document.getElementById('workflowVisualize');
 const workflowSend = document.getElementById('workflowSend');
@@ -879,14 +880,27 @@ demoKeyframesBtn.addEventListener('click', async () => {
 analyzeAudioBtn.addEventListener('click', analyzeSelectedAudio);
 clearAudioBtn.addEventListener('click', clearAudioState);
 sendToRobotBtn.addEventListener('click', async () => {
+  if (sendToRobotBtn.disabled) return;
+  sendToRobotBtn.disabled = true;
   try {
     const parsed = JSON.parse(eventsJson.value);
     if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Load or generate an event timeline first.');
-    await navigator.clipboard.writeText(JSON.stringify(parsed, null, 2));
+    const baseUrl = (robotBaseUrlInput?.value || '').trim() || 'http://192.168.4.1';
+    setStatus(`Sending ${parsed.length} events to ${baseUrl}...`);
+    const response = await fetch('/api/send-to-robot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_url: baseUrl, events: parsed }),
+    });
+    const contentType = response.headers.get('content-type') || '';
+    const data = contentType.includes('application/json') ? await response.json() : { error: await response.text() };
+    if (!response.ok) throw new Error(data.error || 'Robot dispatch failed.');
     setWorkflowStage('complete');
-    setStatus(`Copied ${parsed.length} events. Paste into your robot sender.`);
+    setStatus(`Sent ${data.sent ?? parsed.length} events to ${data.base_url || baseUrl} in ${data.elapsed ?? '?'}s.`);
   } catch (err) {
-    setStatus(`Could not copy robot script: ${err.message}`);
+    setStatus(`Could not send to robot: ${err.message}`);
+  } finally {
+    sendToRobotBtn.disabled = false;
   }
 });
 audioFile.addEventListener('change', () => {

@@ -213,7 +213,7 @@
         <div class="workflow">
           <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
           <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
-          <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Copy JSON script, then paste it into your robot sender.</div>
+          <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Send timeline directly to Kame at <code>192.168.4.1</code>.</div>
         </div>
       </div>
 
@@ -327,9 +327,13 @@
           <button id="loadEventsBtn" class="primary">Load event timeline</button>
           <button id="demoEventsBtn">Load demo</button>
         </div>
+        <div style="margin-top: 10px;">
+          <label for="robotBaseUrl">Robot base URL</label>
+          <input id="robotBaseUrl" type="text" value="http://192.168.4.1" spellcheck="false">
+        </div>
         <div class="row" style="margin-top: 10px;">
-          <button id="sendToRobotBtn" class="good">Copy script for robot</button>
-          <div class="tiny">Tip: this app previews only. Use your robot uploader/serial sender to execute the copied JSON.</div>
+          <button id="sendToRobotBtn" class="good">Send timeline to robot</button>
+          <div class="tiny">Sends events in real-time order to <code>/joystick</code> and <code>/button</code> on your Kame HTTP firmware.</div>
         </div>
       </div>
 
