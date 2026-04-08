@@ -4,7 +4,12 @@ import logging
 import os
 import random
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import librosa
 import numpy as np
@@ -16,6 +21,13 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.logger.setLevel(logging.INFO)
 
 ALLOWED_AUDIO_SUFFIXES = {'.mp3', '.wav', '.ogg', '.m4a', '.flac'}
+ALLOWED_BUTTON_LABELS = {'A', 'B', 'C', 'X', 'Y', 'Z', 'Start', 'Stop'}
+ROBOT_DEFAULT_BASE_URL = 'http://192.168.4.1'
+ROBOT_MAX_EVENTS = 5000
+ROBOT_MAX_SCRIPT_SECONDS = 600.0
+ROBOT_CALL_TIMEOUT_SEC = 3.0
+
+_ROBOT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
 @app.errorhandler(413)
@@ -199,6 +211,88 @@ def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, flo
     return compact, tempo, duration
 
 
+def _normalize_robot_base_url(value: str | None) -> str:
+    candidate = (value or ROBOT_DEFAULT_BASE_URL).strip()
+    if not candidate:
+        candidate = ROBOT_DEFAULT_BASE_URL
+    if not candidate.startswith('http://') and not candidate.startswith('https://'):
+        candidate = f'http://{candidate}'
+    return candidate.rstrip('/')
+
+
+def _http_robot_get(base_url: str, path: str, params: dict) -> int:
+    query = urlencode(params)
+    url = f'{base_url}{path}?{query}'
+    with urlopen(url, timeout=ROBOT_CALL_TIMEOUT_SEC) as response:
+        return int(getattr(response, 'status', 200))
+
+
+def _validate_robot_events(events: object) -> list[dict]:
+    if not isinstance(events, list) or not events:
+        raise ValueError('events must be a non-empty array.')
+    if len(events) > ROBOT_MAX_EVENTS:
+        raise ValueError(f'event count exceeds max ({ROBOT_MAX_EVENTS}).')
+
+    normalized = []
+    last_t = -1e9
+    for raw in events:
+        if not isinstance(raw, dict):
+            raise ValueError('each event must be an object.')
+        kind = str(raw.get('kind', '')).strip().lower()
+        t = float(raw.get('t', 0.0))
+        if not np.isfinite(t) or t < 0:
+            raise ValueError('event time "t" must be a finite number >= 0.')
+        if t < last_t:
+            raise ValueError('events must be sorted by ascending "t".')
+        last_t = t
+
+        if kind == 'joystick':
+            payload = raw.get('payload')
+            if not isinstance(payload, list) or len(payload) != 2:
+                raise ValueError('joystick payload must be [x, y].')
+            x = int(payload[0])
+            y = int(payload[1])
+            normalized.append({'t': t, 'kind': 'joystick', 'payload': [x, y]})
+            continue
+
+        if kind == 'button':
+            label = str(raw.get('payload', '')).strip()
+            if label not in ALLOWED_BUTTON_LABELS:
+                raise ValueError(f'unsupported button label: {label}')
+            normalized.append({'t': t, 'kind': 'button', 'payload': label})
+            continue
+
+        raise ValueError(f'unsupported event kind: {kind}')
+
+    if normalized[-1]['t'] > ROBOT_MAX_SCRIPT_SECONDS:
+        raise ValueError(f'last event exceeds max timeline ({ROBOT_MAX_SCRIPT_SECONDS}s).')
+    return normalized
+
+
+def _send_event_timeline_to_robot(events: list[dict], base_url: str) -> dict:
+    start = time.monotonic()
+    first_t = float(events[0]['t'])
+    dispatches = []
+
+    for event in events:
+        target_sec = max(0.0, float(event['t']) - first_t)
+        elapsed = time.monotonic() - start
+        if target_sec > elapsed:
+            time.sleep(target_sec - elapsed)
+
+        if event['kind'] == 'joystick':
+            x, y = event['payload']
+            status = _http_robot_get(base_url, '/joystick', {'x': int(x), 'y': int(y)})
+            dispatches.append({'t': event['t'], 'kind': 'joystick', 'payload': [int(x), int(y)], 'status': status})
+        else:
+            label = str(event['payload'])
+            status = _http_robot_get(base_url, '/button', {'label': label})
+            dispatches.append({'t': event['t'], 'kind': 'button', 'payload': label, 'status': status})
+
+    elapsed_total = time.monotonic() - start
+    return {'sent': len(dispatches), 'elapsed': round(elapsed_total, 3), 'dispatches': dispatches}
+
+
 @app.post('/api/analyze-audio')
 def analyze_audio():
     if 'audio' not in request.files:
@@ -234,6 +328,49 @@ def analyze_audio():
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+@app.post('/api/send-to-robot')
+def send_to_robot():
+    payload = request.get_json(silent=True) or {}
+    base_url = _normalize_robot_base_url(payload.get('base_url'))
+    dry_run = bool(payload.get('dry_run', False))
+    try:
+        events = _validate_robot_events(payload.get('events'))
+    except (TypeError, ValueError) as err:
+        return jsonify({'error': f'Invalid event timeline: {err}'}), 400
+
+    if dry_run:
+        return jsonify({
+            'ok': True,
+            'mode': 'dry_run',
+            'base_url': base_url,
+            'event_count': len(events),
+            'timeline_seconds': round(float(events[-1]['t']) - float(events[0]['t']), 3),
+        })
+
+    future = _ROBOT_EXECUTOR.submit(_send_event_timeline_to_robot, events, base_url)
+    try:
+        result = future.result(timeout=ROBOT_MAX_SCRIPT_SECONDS + 15.0)
+    except FutureTimeoutError:
+        app.logger.exception('Robot dispatch timed out for %s events to %s', len(events), base_url)
+        return jsonify({'error': 'Robot dispatch timed out.'}), 504
+    except URLError:
+        app.logger.exception('Robot dispatch network error to %s', base_url)
+        return jsonify({'error': f'Could not reach robot at {base_url}. Check Wi-Fi and power.'}), 502
+    except Exception:
+        app.logger.exception('Robot dispatch failed for %s events to %s', len(events), base_url)
+        return jsonify({'error': 'Robot dispatch failed unexpectedly.'}), 500
+
+    return jsonify({
+        'ok': True,
+        'mode': 'live',
+        'base_url': base_url,
+        'event_count': len(events),
+        'sent': result['sent'],
+        'elapsed': result['elapsed'],
+        'dispatches': result['dispatches'],
+    })
 
 
 if __name__ == '__main__':
