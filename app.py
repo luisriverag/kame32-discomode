@@ -28,6 +28,7 @@ ROBOT_MAX_SCRIPT_SECONDS = 600.0
 ROBOT_CALL_TIMEOUT_SEC = 3.0
 ROBOT_MIN_SEND_SPEED = 0.25
 ROBOT_MAX_SEND_SPEED = 1.0
+ROBOT_SAFE_NEUTRAL_JOYSTICK_AT_SEC = 0.15
 
 _ROBOT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
@@ -291,6 +292,51 @@ def _validate_robot_events(events: object) -> list[dict]:
     return normalized
 
 
+def _with_safe_bookends(events: object) -> list[dict]:
+    if not isinstance(events, list):
+        raise ValueError('events must be a non-empty array.')
+
+    out = [dict(event) if isinstance(event, dict) else event for event in events]
+    if not out:
+        return out
+
+    start_event = {'t': 0.0, 'kind': 'button', 'payload': 'Start'}
+    has_start = any(
+        isinstance(event, dict)
+        and str(event.get('kind', '')).strip().lower() == 'button'
+        and str(event.get('payload', '')).strip() == 'Start'
+        for event in out
+    )
+    if not has_start:
+        out.insert(0, start_event)
+
+    has_neutral_joystick = any(
+        isinstance(event, dict)
+        and str(event.get('kind', '')).strip().lower() == 'joystick'
+        and isinstance(event.get('payload'), list)
+        and len(event.get('payload')) == 2
+        and int(event.get('payload')[0]) == 0
+        and int(event.get('payload')[1]) == 0
+        and float(event.get('t', -1.0)) <= ROBOT_SAFE_NEUTRAL_JOYSTICK_AT_SEC
+        for event in out
+    )
+    if not has_neutral_joystick:
+        out.append({'t': ROBOT_SAFE_NEUTRAL_JOYSTICK_AT_SEC, 'kind': 'joystick', 'payload': [0, 0]})
+
+    has_stop = any(
+        isinstance(event, dict)
+        and str(event.get('kind', '')).strip().lower() == 'button'
+        and str(event.get('payload', '')).strip() == 'Stop'
+        for event in out
+    )
+    if not has_stop:
+        latest_t = max(float(event.get('t', 0.0)) for event in out if isinstance(event, dict))
+        out.append({'t': round(latest_t + 0.1, 3), 'kind': 'button', 'payload': 'Stop'})
+
+    out.sort(key=lambda event: float(event.get('t', 0.0)) if isinstance(event, dict) else 0.0)
+    return out
+
+
 def _send_event_timeline_to_robot(events: list[dict], base_url: str, send_speed: float = 1.0) -> dict:
     start = time.monotonic()
     first_t = float(events[0]['t'])
@@ -363,7 +409,7 @@ def send_to_robot():
     base_url = _normalize_robot_base_url(payload.get('base_url'))
     dry_run = bool(payload.get('dry_run', False))
     try:
-        events = _validate_robot_events(payload.get('events'))
+        events = _validate_robot_events(_with_safe_bookends(payload.get('events')))
         send_speed = _validate_send_speed(payload.get('send_speed'))
     except (TypeError, ValueError) as err:
         return _error_response(f'Invalid robot send request: {err}', 400, code='invalid_robot_send_request')
