@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import logging
@@ -88,6 +87,14 @@ def _sample_feature(times: np.ndarray, values: np.ndarray, t: float) -> float:
     return float(values[idx])
 
 
+def _fallback_beat_grid(duration: float, tempo: float | None) -> np.ndarray:
+    if tempo is None or not np.isfinite(tempo) or tempo < 40 or tempo > 220:
+        tempo = 110.0
+    beat_period = 60.0 / float(tempo)
+    beat_count = max(4, int(duration / beat_period) + 1)
+    return np.linspace(0.0, max(0.0, duration - 1e-3), beat_count)
+
+
 def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, float]:
     rng = random.Random(seed)
 
@@ -96,11 +103,12 @@ def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, flo
 
     onset_env = librosa.onset.onset_strength(y=y, sr=sr)
     tempo_raw, beat_frames = librosa.beat.beat_track(y=y, sr=sr, onset_envelope=onset_env, trim=False)
-    tempo = float(np.atleast_1d(tempo_raw)[0])
+    tempo = float(np.atleast_1d(tempo_raw)[0]) if np.size(np.atleast_1d(tempo_raw)) else 0.0
     beat_times = librosa.frames_to_time(beat_frames, sr=sr)
 
     if len(beat_times) < 4:
-        raise ValueError('Could not detect enough beats in the uploaded audio to build a dance routine.')
+        app.logger.info('Sparse beat detection (%s beats); using fallback beat grid for %s', len(beat_times), audio_path)
+        beat_times = _fallback_beat_grid(duration, tempo)
 
     rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
     rms_t = librosa.times_like(rms, sr=sr, hop_length=512)
@@ -220,7 +228,7 @@ def analyze_audio():
             'events': events,
             'event_count': len(events),
         })
-    except Exception as exc:
+    except Exception:
         app.logger.exception('Audio analysis failed for upload %s', filename)
         return jsonify({'error': 'Audio analysis failed. Verify the file is a valid, non-corrupt audio clip.'}), 400
     finally:
