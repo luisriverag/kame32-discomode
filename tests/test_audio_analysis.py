@@ -46,6 +46,15 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('Unsupported audio format', response.get_json()['error'])
 
+    def test_missing_audio_field_rejected(self):
+        response = self.client.post(
+            '/api/analyze-audio',
+            data={},
+            content_type='multipart/form-data',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('No audio file uploaded', response.get_json()['error'])
+
     def test_send_to_robot_dry_run(self):
         events = [
             {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
@@ -63,6 +72,20 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertTrue(payload['ok'])
         self.assertEqual(payload['mode'], 'dry_run')
         self.assertEqual(payload['event_count'], 4)
+
+    def test_send_to_robot_dry_run_normalizes_base_url(self):
+        events = [
+            {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+            {'t': 0.1, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        response = self.client.post('/api/send-to-robot', json={
+            'base_url': '192.168.4.1/',
+            'dry_run': True,
+            'events': events,
+        })
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['base_url'], 'http://192.168.4.1')
 
     def test_send_to_robot_rejects_invalid_event_timeline(self):
         response = self.client.post('/api/send-to-robot', json={

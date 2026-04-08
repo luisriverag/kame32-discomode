@@ -36,6 +36,7 @@ const demoKeyframesBtn = document.getElementById('demoKeyframesBtn');
 const audioFile = document.getElementById('audioFile');
 const analyzeAudioBtn = document.getElementById('analyzeAudioBtn');
 const clearAudioBtn = document.getElementById('clearAudioBtn');
+const openSendPanelBtn = document.getElementById('openSendPanelBtn');
 const audioPreview = document.getElementById('audioPreview');
 const audioMeta = document.getElementById('audioMeta');
 const sendToRobotBtn = document.getElementById('sendToRobotBtn');
@@ -761,7 +762,11 @@ playBtn.addEventListener('click', async () => {
       setStatus('Playing audio-synced preview.');
       return;
     } catch (err) {
-      setStatus(`Could not play audio: ${err.message}`);
+      state.audioSyncEnabled = false;
+      pauseAnyAudio();
+      state.playing = true;
+      setStatus(`Could not play audio (${err.message}). Continuing preview without audio sync.`);
+      setWorkflowStage('visualize');
       return;
     }
   }
@@ -879,6 +884,13 @@ demoKeyframesBtn.addEventListener('click', async () => {
 
 analyzeAudioBtn.addEventListener('click', analyzeSelectedAudio);
 clearAudioBtn.addEventListener('click', clearAudioState);
+openSendPanelBtn.addEventListener('click', () => {
+  modeSelect.value = 'events';
+  setMode('events');
+  panels.events?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setWorkflowStage('send');
+  setStatus('Opened Event timeline panel. Use "Send timeline to robot" there.');
+});
 sendToRobotBtn.addEventListener('click', async () => {
   if (sendToRobotBtn.disabled) return;
   sendToRobotBtn.disabled = true;
