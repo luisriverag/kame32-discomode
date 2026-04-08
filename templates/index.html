@@ -166,6 +166,28 @@
       color: var(--muted);
       max-width: 320px;
     }
+    .workflow {
+      display: grid;
+      gap: 8px;
+    }
+    .workflow-step {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: rgba(26, 35, 45, 0.7);
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .workflow-step.active {
+      border-color: #2d5f98;
+      background: rgba(23, 48, 79, 0.65);
+      color: var(--text);
+    }
+    .workflow-step.done {
+      border-color: #1f6b54;
+      background: rgba(21, 51, 42, 0.65);
+      color: #d7f8ea;
+    }
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .viewer, #scene { min-height: 70vh; height: 70vh; }
@@ -187,6 +209,15 @@
       </div>
 
       <div class="card">
+        <h2>Quick workflow</h2>
+        <div class="workflow">
+          <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
+          <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
+          <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Copy JSON script, then paste it into your robot sender.</div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Load MP3 and auto-build dance</h2>
         <label for="audioFile">Audio file</label>
         <input id="audioFile" type="file" accept=".mp3,audio/*">
@@ -194,7 +225,7 @@
           <button id="analyzeAudioBtn" class="primary">Analyze audio into dance</button>
           <button id="clearAudioBtn">Clear audio</button>
         </div>
-        <audio id="audioPreview" controls hidden style="width: 100%; margin-top: 10px;"></audio>
+        <audio id="audioPreview" controls hidden preload="metadata" playsinline style="width: 100%; margin-top: 10px;"></audio>
         <p class="tiny" id="audioMeta">Choose an MP3, then the server will extract beats and load an event timeline for preview.</p>
       </div>
 
@@ -295,6 +326,10 @@
         <div class="row" style="margin-top: 10px;">
           <button id="loadEventsBtn" class="primary">Load event timeline</button>
           <button id="demoEventsBtn">Load demo</button>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <button id="sendToRobotBtn" class="good">Copy script for robot</button>
+          <div class="tiny">Tip: this app previews only. Use your robot uploader/serial sender to execute the copied JSON.</div>
         </div>
       </div>
 

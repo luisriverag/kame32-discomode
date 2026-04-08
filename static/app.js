@@ -38,6 +38,10 @@ const analyzeAudioBtn = document.getElementById('analyzeAudioBtn');
 const clearAudioBtn = document.getElementById('clearAudioBtn');
 const audioPreview = document.getElementById('audioPreview');
 const audioMeta = document.getElementById('audioMeta');
+const sendToRobotBtn = document.getElementById('sendToRobotBtn');
+const workflowAnalyze = document.getElementById('workflowAnalyze');
+const workflowVisualize = document.getElementById('workflowVisualize');
+const workflowSend = document.getElementById('workflowSend');
 
 const panels = {
   joystick: document.getElementById('joystickCard'),
@@ -90,10 +94,31 @@ const state = {
   keyframes: [{ t: 0, pose: { ...homePose } }, { t: 1, pose: { ...homePose } }],
   analyzedAudio: null,
   audioSyncEnabled: false,
+  audioReady: false,
 };
 
 function setStatus(message) {
   statusBox.textContent = message;
+}
+
+function setWorkflowStage(stage) {
+  const states = {
+    analyze: { analyze: 'active', visualize: '', send: '' },
+    visualize: { analyze: 'done', visualize: 'active', send: '' },
+    send: { analyze: 'done', visualize: 'done', send: 'active' },
+    complete: { analyze: 'done', visualize: 'done', send: 'done' },
+  };
+  const selected = states[stage] || states.analyze;
+  const map = [
+    [workflowAnalyze, selected.analyze],
+    [workflowVisualize, selected.visualize],
+    [workflowSend, selected.send],
+  ];
+  for (const [el, stateClass] of map) {
+    if (!el) continue;
+    el.classList.remove('active', 'done');
+    if (stateClass) el.classList.add(stateClass);
+  }
 }
 
 function clamp(v, min, max) {
@@ -132,6 +157,57 @@ function pauseAnyAudio() {
   if (!audioPreview.paused) {
     audioPreview.pause();
   }
+}
+
+function waitForAudioReady() {
+  return new Promise((resolve, reject) => {
+    if (!audioPreview.src) {
+      reject(new Error('No audio source loaded.'));
+      return;
+    }
+
+    if (audioPreview.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      state.audioReady = true;
+      resolve();
+      return;
+    }
+
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Timed out waiting for decoded audio.'));
+    }, 8000);
+
+    const onReady = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      state.audioReady = true;
+      resolve();
+    };
+
+    const onError = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const mediaError = audioPreview.error;
+      reject(new Error(mediaError ? `Browser could not decode audio (code ${mediaError.code}).` : 'Browser could not decode audio.'));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      audioPreview.removeEventListener('loadeddata', onReady);
+      audioPreview.removeEventListener('canplay', onReady);
+      audioPreview.removeEventListener('error', onError);
+    };
+
+    audioPreview.addEventListener('loadeddata', onReady, { once: true });
+    audioPreview.addEventListener('canplay', onReady, { once: true });
+    audioPreview.addEventListener('error', onError, { once: true });
+    audioPreview.load();
+  });
 }
 
 function formatSpeedValue(value) {
@@ -619,7 +695,7 @@ async function analyzeSelectedAudio() {
   audioPreview.dataset.objectUrl = objectUrl;
   audioPreview.src = objectUrl;
   audioPreview.hidden = false;
-  audioPreview.load();
+  state.audioReady = false;
   audioMeta.textContent = `Analyzing ${file.name} ...`;
   setStatus('Uploading audio for beat analysis...');
 
@@ -638,12 +714,16 @@ async function analyzeSelectedAudio() {
     modeSelect.value = 'events';
     state.time = 0;
     audioPreview.currentTime = 0;
+    await waitForAudioReady();
     applyPlaybackSpeed(state.speed);
     audioMeta.textContent = `${data.filename} · ${data.tempo.toFixed(1)} BPM · ${data.duration.toFixed(2)}s · ${data.event_count} events`;
     setStatus(`Audio analyzed: ${data.tempo.toFixed(1)} BPM, ${data.event_count} events loaded.`);
+    setWorkflowStage('visualize');
   } catch (err) {
     state.analyzedAudio = null;
     state.audioSyncEnabled = false;
+    state.audioReady = false;
+    setWorkflowStage('analyze');
     setStatus(`Audio analysis failed: ${err.message}`);
     audioMeta.textContent = `Analysis failed for ${file.name}: ${err.message}`;
   } finally {
@@ -655,6 +735,7 @@ function clearAudioState() {
   pauseAnyAudio();
   state.analyzedAudio = null;
   state.audioSyncEnabled = false;
+  state.audioReady = false;
   if (audioPreview.dataset.objectUrl) {
     URL.revokeObjectURL(audioPreview.dataset.objectUrl);
     delete audioPreview.dataset.objectUrl;
@@ -663,6 +744,7 @@ function clearAudioState() {
   audioPreview.hidden = true;
   audioFile.value = '';
   audioMeta.textContent = 'Choose an MP3, then the server will extract beats and load an event timeline for preview.';
+  setWorkflowStage('analyze');
   setStatus('Audio cleared.');
 }
 
@@ -670,7 +752,11 @@ playBtn.addEventListener('click', async () => {
   if (usingAudioClock()) {
     try {
       applyPlaybackSpeed(state.speed);
+      if (!state.audioReady || audioPreview.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        await waitForAudioReady();
+      }
       await audioPreview.play();
+      setWorkflowStage('send');
       setStatus('Playing audio-synced preview.');
       return;
     } catch (err) {
@@ -758,6 +844,7 @@ loadEventsBtn.addEventListener('click', () => {
     loadJsonIntoMode('events', parsed, { audioSync: false });
     modeSelect.value = 'events';
     state.time = 0;
+    setWorkflowStage('visualize');
   } catch (err) {
     setStatus(`Could not load events: ${err.message}`);
   }
@@ -791,6 +878,17 @@ demoKeyframesBtn.addEventListener('click', async () => {
 
 analyzeAudioBtn.addEventListener('click', analyzeSelectedAudio);
 clearAudioBtn.addEventListener('click', clearAudioState);
+sendToRobotBtn.addEventListener('click', async () => {
+  try {
+    const parsed = JSON.parse(eventsJson.value);
+    if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Load or generate an event timeline first.');
+    await navigator.clipboard.writeText(JSON.stringify(parsed, null, 2));
+    setWorkflowStage('complete');
+    setStatus(`Copied ${parsed.length} events. Paste into your robot sender.`);
+  } catch (err) {
+    setStatus(`Could not copy robot script: ${err.message}`);
+  }
+});
 audioFile.addEventListener('change', () => {
   const file = audioFile.files?.[0];
   if (file) {
@@ -820,6 +918,7 @@ buildServoSliders();
 applyModeVisibility();
 setDuration(12);
 applyPlaybackSpeed(1);
+setWorkflowStage('analyze');
 
 let lastFrame = performance.now();
 function animate(now) {
