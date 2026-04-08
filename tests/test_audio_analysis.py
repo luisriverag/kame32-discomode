@@ -1,6 +1,8 @@
 import io
 import tempfile
 import unittest
+from unittest.mock import patch
+from urllib.error import URLError
 from pathlib import Path
 
 import numpy as np
@@ -44,7 +46,9 @@ class AudioAnalysisTests(unittest.TestCase):
             content_type='multipart/form-data',
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn('Unsupported audio format', response.get_json()['error'])
+        payload = response.get_json()
+        self.assertIn('Unsupported audio format', payload['error'])
+        self.assertEqual(payload['code'], 'unsupported_audio_format')
 
     def test_missing_audio_field_rejected(self):
         response = self.client.post(
@@ -53,7 +57,9 @@ class AudioAnalysisTests(unittest.TestCase):
             content_type='multipart/form-data',
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn('No audio file uploaded', response.get_json()['error'])
+        payload = response.get_json()
+        self.assertIn('No audio file uploaded', payload['error'])
+        self.assertEqual(payload['code'], 'missing_audio')
 
     def test_send_to_robot_dry_run(self):
         events = [
@@ -93,6 +99,40 @@ class AudioAnalysisTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
         self.assertIn('Invalid event timeline', response.get_json()['error'])
+        self.assertEqual(response.get_json()['code'], 'invalid_event_timeline')
+
+    def test_send_to_robot_network_error_includes_code_and_details(self):
+        events = [
+            {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+            {'t': 0.1, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        with patch('app._send_event_timeline_to_robot', side_effect=URLError('timed out')):
+            response = self.client.post('/api/send-to-robot', json={
+                'base_url': 'http://192.168.4.1',
+                'events': events,
+            })
+
+        self.assertEqual(response.status_code, 502)
+        payload = response.get_json()
+        self.assertEqual(payload['code'], 'robot_unreachable')
+        self.assertIn('Could not reach robot', payload['error'])
+        self.assertIn('timed out', payload['details'])
+
+    def test_send_to_robot_unexpected_error_includes_debug_details(self):
+        events = [
+            {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+            {'t': 0.1, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        with patch('app._send_event_timeline_to_robot', side_effect=RuntimeError('boom')):
+            response = self.client.post('/api/send-to-robot', json={
+                'base_url': 'http://192.168.4.1',
+                'events': events,
+            })
+
+        self.assertEqual(response.status_code, 500)
+        payload = response.get_json()
+        self.assertEqual(payload['code'], 'robot_dispatch_failed')
+        self.assertIn('RuntimeError', payload['details'])
 
 
 if __name__ == '__main__':
