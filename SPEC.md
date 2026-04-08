@@ -19,8 +19,10 @@ The current goal is to provide a practical workflow:
 1. preview likely Kame32 motion in the browser,
 2. import or auto-generate event timelines,
 3. audition those timelines with uploaded music,
-4. slow the preview to 50% or 25% speed when needed,
-5. and keep the data structures close to the stock Wi-Fi firmware currently running on the robot.
+4. explicitly switch into analyzed event visualization mode,
+5. export/copy timeline JSON for robot sender tools,
+6. slow the preview to 50% or 25% speed when needed,
+7. and keep the data structures close to the stock Wi-Fi firmware currently running on the robot.
 
 ## Confirmed Kame32 stock control model
 
@@ -97,6 +99,7 @@ Main frontend responsibilities:
 - provide multiple preview modes,
 - import JSON timelines,
 - upload audio for analysis,
+- guide the user through Load MP3 → Visualize → Send workflow,
 - keep browser audio and preview motion synchronized,
 - and expose playback-speed presets.
 
@@ -155,7 +158,8 @@ Supported event styles:
 Behavior:
 - joystick events update internal joystick state,
 - button events activate approximate routine previews,
-- pose events can be treated like pose keyframes.
+- pose events can be treated like pose keyframes,
+- analyzed-audio timelines are intended to run in this mode with audio-sync enabled.
 
 ### 5. Keyframe JSON mode
 Purpose:
@@ -239,6 +243,15 @@ The current 3D model is a stylized preview mesh, not a CAD-accurate Kame32 repli
    - generated events,
    - event count.
 
+### Frontend post-analysis flow
+After a successful `/api/analyze-audio` response, the frontend now:
+1. stores analyzed payload in state,
+2. writes generated events to the event JSON editor,
+3. activates analyzed event timeline visualization mode,
+4. waits for browser media readiness before audio-synced play,
+5. allows manual re-activation via **Visualize analyzed dance**,
+6. allows export via **Copy script for robot** (clipboard JSON for external sender/uploader tools).
+
 ### Current analysis parameters
 - audio is loaded mono,
 - sample rate is resampled to `22050 Hz`,
@@ -321,9 +334,17 @@ Near-duplicate joystick entries are removed if the same payload repeats within `
 ### Current audio preview behavior
 - uploaded audio is loaded into a browser `<audio>` element using an object URL,
 - the browser audio player is shown after a file is selected,
-- once analysis succeeds, the event timeline is auto-loaded,
-- the app switches into Event timeline mode,
+- once analysis succeeds, analyzed events are loaded into Event timeline mode,
+- users can explicitly click **Visualize analyzed dance** to force timeline activation/reset,
 - the browser audio clock becomes the transport source.
+
+### Current workflow guidance UI
+The sidebar includes an explicit three-step helper:
+1. **Load MP3**
+2. **Visualize**
+3. **Send to robot**
+
+Workflow stage highlighting updates as users analyze, preview, and copy scripts.
 
 ### Why audio-sync mode matters
 In audio-sync mode:
@@ -410,7 +431,7 @@ Accepted inside event timelines:
 1. The 3D viewer is a stylized approximation, not exact robot geometry.
 2. Button routines are approximated by hand-authored preview motions, not decoded from firmware internals.
 3. The MP3 analysis produces **event timelines**, not true physically optimized choreography.
-4. There is no direct "send to robot" route in the current Flask app.
+4. There is no direct "send to robot" route in the current Flask app; current UX exports/copies JSON for external tooling.
 5. There is no raw `/pose` or `/servo` Wi-Fi endpoint in the known stock firmware.
 6. The frontend currently uses Three.js from a CDN, so internet access is needed unless those assets are vendored locally.
 7. The preview assumes a practical hip/knee mapping that may need adjustment for some physical builds.
