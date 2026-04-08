@@ -6,7 +6,9 @@ This document captures the current known specification for the Kame32 dance-prev
 - confirmed behavior from the current stock Kame32 gamepad firmware,
 - the current Flask 3D preview app implementation,
 - the MP3-to-dance analysis pipeline,
-- and the requested playback-speed additions.
+- playback-speed additions,
+- send-to-robot speed controls,
+- and 3D loading fallback behavior.
 
 It is intentionally detailed so the project can be continued without re-discovering the same design decisions.
 
@@ -20,7 +22,8 @@ The current goal is to provide a practical workflow:
 2. import or auto-generate event timelines,
 3. audition those timelines with uploaded music,
 4. slow the preview to 50% or 25% speed when needed,
-5. and keep the data structures close to the stock Wi-Fi firmware currently running on the robot.
+5. send timelines to the robot at normal or reduced dispatch speed,
+6. and keep the data structures close to the stock Wi-Fi firmware currently running on the robot.
 
 ## Confirmed Kame32 stock control model
 
@@ -87,6 +90,7 @@ Current routes:
 - `/` → serves the app UI
 - `/api/presets` → returns demo event and keyframe presets
 - `/api/analyze-audio` → accepts uploaded audio and returns a generated event timeline
+- `/api/send-to-robot` → validates and dispatches event timelines to robot HTTP endpoints
 
 ### Frontend
 Current frontend: one HTML page plus one browser-side JS module using Three.js.
@@ -98,7 +102,13 @@ Main frontend responsibilities:
 - import JSON timelines,
 - upload audio for analysis,
 - keep browser audio and preview motion synchronized,
-- and expose playback-speed presets.
+- expose playback-speed presets,
+- expose robot send-speed selection,
+- and remain usable when primary Three.js CDN loading fails.
+
+Current viewer layout detail:
+- transport/progress meter and servo chips are shown at the **top** of the viewer pane.
+- status box is offset below the meter to avoid overlap.
 
 ## Supported preview modes
 
@@ -367,6 +377,30 @@ This gives comparable slow-motion review for:
 - event mode without audio
 - keyframe mode
 
+## Send-to-robot requirements implemented
+
+### Endpoint and transport
+- Backend route: `POST /api/send-to-robot`.
+- Robot target base URL defaults to `http://192.168.4.1` and is normalized to include scheme.
+- Dispatch protocol uses:
+  - `GET /joystick?x=...&y=...`
+  - `GET /button?label=...`
+
+### Validation and limits
+- `events` must be a non-empty ordered array.
+- Max events: `5000`.
+- Max last event timestamp: `600s`.
+- Event kinds: `joystick` (`[x,y]`) and `button` (allowed labels only).
+- `send_speed` is optional and must be within `0.25` to `1.0`.
+
+### Send-speed semantics
+- `send_speed=1.0`: normal timeline dispatch speed.
+- `send_speed<1.0`: reduced speed by stretching event schedule (`target_time / send_speed`).
+- Example: `send_speed=0.5` doubles real-world dispatch duration.
+
+### Dry-run mode
+- `dry_run=true` validates payload and returns summary metadata without sending HTTP calls to the robot.
+
 ### UI behavior
 The app now exposes:
 - a numeric playback speed field,
@@ -410,10 +444,9 @@ Accepted inside event timelines:
 1. The 3D viewer is a stylized approximation, not exact robot geometry.
 2. Button routines are approximated by hand-authored preview motions, not decoded from firmware internals.
 3. The MP3 analysis produces **event timelines**, not true physically optimized choreography.
-4. There is no direct "send to robot" route in the current Flask app.
-5. There is no raw `/pose` or `/servo` Wi-Fi endpoint in the known stock firmware.
-6. The frontend currently uses Three.js from a CDN, so internet access is needed unless those assets are vendored locally.
-7. The preview assumes a practical hip/knee mapping that may need adjustment for some physical builds.
+4. There is no raw `/pose` or `/servo` Wi-Fi endpoint in the known stock firmware.
+5. The frontend depends on external CDNs for 3D modules (with fallback attempts), so fully offline 3D needs vendored assets.
+6. The preview assumes a practical hip/knee mapping that may need adjustment for some physical builds.
 
 ## Existing artifacts created so far
 

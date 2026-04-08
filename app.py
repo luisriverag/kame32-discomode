@@ -26,6 +26,8 @@ ROBOT_DEFAULT_BASE_URL = 'http://192.168.4.1'
 ROBOT_MAX_EVENTS = 5000
 ROBOT_MAX_SCRIPT_SECONDS = 600.0
 ROBOT_CALL_TIMEOUT_SEC = 3.0
+ROBOT_MIN_SEND_SPEED = 0.25
+ROBOT_MAX_SEND_SPEED = 1.0
 
 _ROBOT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
@@ -236,6 +238,17 @@ def _http_robot_get(base_url: str, path: str, params: dict) -> int:
         return int(getattr(response, 'status', 200))
 
 
+def _validate_send_speed(raw_value: object) -> float:
+    if raw_value is None:
+        return 1.0
+    speed = float(raw_value)
+    if not np.isfinite(speed):
+        raise ValueError('send_speed must be a finite number.')
+    if speed < ROBOT_MIN_SEND_SPEED or speed > ROBOT_MAX_SEND_SPEED:
+        raise ValueError(f'send_speed must be between {ROBOT_MIN_SEND_SPEED:.2f} and {ROBOT_MAX_SEND_SPEED:.2f}.')
+    return speed
+
+
 def _validate_robot_events(events: object) -> list[dict]:
     if not isinstance(events, list) or not events:
         raise ValueError('events must be a non-empty array.')
@@ -278,13 +291,13 @@ def _validate_robot_events(events: object) -> list[dict]:
     return normalized
 
 
-def _send_event_timeline_to_robot(events: list[dict], base_url: str) -> dict:
+def _send_event_timeline_to_robot(events: list[dict], base_url: str, send_speed: float = 1.0) -> dict:
     start = time.monotonic()
     first_t = float(events[0]['t'])
     dispatches = []
 
     for event in events:
-        target_sec = max(0.0, float(event['t']) - first_t)
+        target_sec = max(0.0, (float(event['t']) - first_t) / send_speed)
         elapsed = time.monotonic() - start
         if target_sec > elapsed:
             time.sleep(target_sec - elapsed)
@@ -299,7 +312,12 @@ def _send_event_timeline_to_robot(events: list[dict], base_url: str) -> dict:
             dispatches.append({'t': event['t'], 'kind': 'button', 'payload': label, 'status': status})
 
     elapsed_total = time.monotonic() - start
-    return {'sent': len(dispatches), 'elapsed': round(elapsed_total, 3), 'dispatches': dispatches}
+    return {
+        'sent': len(dispatches),
+        'elapsed': round(elapsed_total, 3),
+        'dispatches': dispatches,
+        'send_speed': float(send_speed),
+    }
 
 
 @app.post('/api/analyze-audio')
@@ -346,8 +364,9 @@ def send_to_robot():
     dry_run = bool(payload.get('dry_run', False))
     try:
         events = _validate_robot_events(payload.get('events'))
+        send_speed = _validate_send_speed(payload.get('send_speed'))
     except (TypeError, ValueError) as err:
-        return _error_response(f'Invalid event timeline: {err}', 400, code='invalid_event_timeline')
+        return _error_response(f'Invalid robot send request: {err}', 400, code='invalid_robot_send_request')
 
     if dry_run:
         return jsonify({
@@ -356,9 +375,10 @@ def send_to_robot():
             'base_url': base_url,
             'event_count': len(events),
             'timeline_seconds': round(float(events[-1]['t']) - float(events[0]['t']), 3),
+            'send_speed': send_speed,
         })
 
-    future = _ROBOT_EXECUTOR.submit(_send_event_timeline_to_robot, events, base_url)
+    future = _ROBOT_EXECUTOR.submit(_send_event_timeline_to_robot, events, base_url, send_speed)
     try:
         result = future.result(timeout=ROBOT_MAX_SCRIPT_SECONDS + 15.0)
     except FutureTimeoutError:
@@ -379,6 +399,7 @@ def send_to_robot():
         'sent': result['sent'],
         'elapsed': result['elapsed'],
         'dispatches': result['dispatches'],
+        'send_speed': result['send_speed'],
     })
 
 

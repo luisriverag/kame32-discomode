@@ -78,6 +78,7 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertTrue(payload['ok'])
         self.assertEqual(payload['mode'], 'dry_run')
         self.assertEqual(payload['event_count'], 4)
+        self.assertEqual(payload['send_speed'], 1.0)
 
     def test_send_to_robot_dry_run_normalizes_base_url(self):
         events = [
@@ -98,8 +99,37 @@ class AudioAnalysisTests(unittest.TestCase):
             'events': [{'t': -1, 'kind': 'joystick', 'payload': [0, 0]}],
         })
         self.assertEqual(response.status_code, 400)
-        self.assertIn('Invalid event timeline', response.get_json()['error'])
-        self.assertEqual(response.get_json()['code'], 'invalid_event_timeline')
+        self.assertIn('Invalid robot send request', response.get_json()['error'])
+        self.assertEqual(response.get_json()['code'], 'invalid_robot_send_request')
+
+    def test_send_to_robot_rejects_invalid_send_speed(self):
+        events = [
+            {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+            {'t': 0.1, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        response = self.client.post('/api/send-to-robot', json={
+            'events': events,
+            'send_speed': 0.1,
+        })
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertEqual(payload['code'], 'invalid_robot_send_request')
+        self.assertIn('send_speed must be between', payload['error'])
+
+    def test_send_to_robot_dry_run_accepts_reduced_speed(self):
+        events = [
+            {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+            {'t': 0.2, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        response = self.client.post('/api/send-to-robot', json={
+            'base_url': 'http://192.168.4.1',
+            'dry_run': True,
+            'send_speed': 0.5,
+            'events': events,
+        })
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['send_speed'], 0.5)
 
     def test_send_to_robot_network_error_includes_code_and_details(self):
         events = [

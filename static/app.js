@@ -38,6 +38,7 @@ const audioPreview = document.getElementById('audioPreview');
 const audioMeta = document.getElementById('audioMeta');
 const sendToRobotBtn = document.getElementById('sendToRobotBtn');
 const robotBaseUrlInput = document.getElementById('robotBaseUrl');
+const robotSendSpeedInput = document.getElementById('robotSendSpeed');
 const workflowAnalyze = document.getElementById('workflowAnalyze');
 const workflowVisualize = document.getElementById('workflowVisualize');
 const workflowSend = document.getElementById('workflowSend');
@@ -473,9 +474,41 @@ let threeReady = false;
 const degToRad = (deg) => (deg * Math.PI) / 180;
 
 async function init3D() {
+  const moduleSources = [
+    {
+      name: 'jsdelivr',
+      three: 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js',
+      controls: 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js',
+    },
+    {
+      name: 'unpkg',
+      three: 'https://unpkg.com/three@0.164.1/build/three.module.js',
+      controls: 'https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js',
+    },
+  ];
+
   try {
-    const threeModule = await import('https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js');
-    const controlsModule = await import('https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js');
+    let threeModule = null;
+    let controlsModule = null;
+    let loadedFrom = null;
+
+    for (const source of moduleSources) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        threeModule = await import(source.three);
+        // eslint-disable-next-line no-await-in-loop
+        controlsModule = await import(source.controls);
+        loadedFrom = source.name;
+        break;
+      } catch (sourceErr) {
+        console.warn(`3D module load failed from ${source.name}.`, sourceErr);
+      }
+    }
+
+    if (!threeModule || !controlsModule) {
+      throw new Error('Could not load three.js modules from any CDN source.');
+    }
+
     THREE = threeModule;
     const { OrbitControls } = controlsModule;
 
@@ -570,6 +603,7 @@ async function init3D() {
 
     threeReady = true;
     resizeRenderer();
+    setStatus(`3D preview connected (${loadedFrom}).`);
   } catch (err) {
     console.warn('3D module unavailable; running without 3D scene.', err);
     init2DFallback();
@@ -1040,11 +1074,13 @@ sendToRobotBtn.addEventListener('click', async () => {
     const parsed = JSON.parse(eventsJson.value);
     if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Load or generate an event timeline first.');
     const baseUrl = (robotBaseUrlInput?.value || '').trim() || 'http://192.168.4.1';
-    setStatus(`Sending ${parsed.length} events to ${baseUrl}...`);
+    const sendSpeed = clamp(Number(robotSendSpeedInput?.value || 1), 0.25, 1);
+    const sendPercent = Math.round(sendSpeed * 100);
+    setStatus(`Sending ${parsed.length} events to ${baseUrl} at ${sendPercent}% speed...`);
     const response = await fetch('/api/send-to-robot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base_url: baseUrl, events: parsed }),
+      body: JSON.stringify({ base_url: baseUrl, events: parsed, send_speed: sendSpeed }),
     });
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await response.json() : { error: await response.text() };
@@ -1053,7 +1089,8 @@ sendToRobotBtn.addEventListener('click', async () => {
       throw new Error(formatApiError(data, 'Robot dispatch failed.'));
     }
     setWorkflowStage('complete');
-    setStatus(`Sent ${data.sent ?? parsed.length} events to ${data.base_url || baseUrl} in ${data.elapsed ?? '?'}s.`);
+    const resolvedPercent = Math.round(Number(data.send_speed ?? sendSpeed) * 100);
+    setStatus(`Sent ${data.sent ?? parsed.length} events to ${data.base_url || baseUrl} in ${data.elapsed ?? '?'}s at ${resolvedPercent}% speed.`);
   } catch (err) {
     console.error('Could not send to robot:', err);
     setStatus(`Could not send to robot: ${err.message}`);

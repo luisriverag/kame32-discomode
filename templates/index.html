@@ -128,12 +128,13 @@
       position: absolute;
       left: 20px;
       right: 20px;
-      bottom: 18px;
+      top: 18px;
       background: rgba(8, 11, 16, 0.86);
       border: 1px solid var(--border);
       border-radius: 14px;
       padding: 14px;
       backdrop-filter: blur(8px);
+      z-index: 3;
     }
     .meter-grid {
       display: grid;
@@ -156,7 +157,7 @@
     .tiny { font-size: 0.8rem; color: var(--muted); }
     .status {
       position: absolute;
-      top: 18px;
+      top: 108px;
       right: 18px;
       background: rgba(8, 11, 16, 0.86);
       border: 1px solid var(--border);
@@ -165,6 +166,7 @@
       font-size: 0.88rem;
       color: var(--muted);
       max-width: 320px;
+      z-index: 4;
     }
     .workflow {
       display: grid;
@@ -342,6 +344,18 @@
         <div style="margin-top: 10px;">
           <label for="robotBaseUrl">Robot base URL</label>
           <input id="robotBaseUrl" type="text" value="http://192.168.4.1" spellcheck="false">
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <div>
+            <label for="robotSendSpeed">Robot send speed</label>
+            <select id="robotSendSpeed">
+              <option value="1">Normal (100%)</option>
+              <option value="0.75">Reduced (75%)</option>
+              <option value="0.5">Reduced (50%)</option>
+              <option value="0.25">Reduced (25%)</option>
+            </select>
+          </div>
+          <div class="tiny">Use reduced send speed if your robot misses commands at full tempo.</div>
         </div>
         <div class="row" style="margin-top: 10px;">
           <button id="sendToRobotBtn" class="good">Send timeline to robot</button>

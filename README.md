@@ -14,6 +14,8 @@ A small Flask web app that previews Kame32 movements in 3D.
 - Optional browser audio playback synced to the preview timeline
 - Quick playback presets for 100%, 50%, and 25% speed, with music and move timing slowed together in audio-sync mode
 - Direct event streaming to Kame over Wi-Fi (`http://192.168.4.1`) after preview
+- Adjustable robot send speed (100% / 75% / 50% / 25%) for slower live dispatch when needed
+- Resilient 3D loader that tries multiple CDNs (jsDelivr then unpkg) before falling back to built-in 2D preview
 
 ## Run
 
@@ -34,7 +36,41 @@ Then open http://127.0.0.1:5000
 4. The server extracts beats with `librosa`, generates a Kame32-style event timeline, and switches the viewer to **Event timeline JSON** mode.
 5. Press **Play** to preview it in 3D with the browser audio element as the timeline clock.
 6. Use the **100% / 50% / 25%** speed buttons to audition the same choreography in slow motion; in audio-sync mode both the music and movement timeline slow down together.
-7. Click **Send timeline to robot** to stream events directly to your Kame firmware over HTTP.
+7. In **Event timeline JSON**, choose **Robot send speed** (100/75/50/25%).
+8. Click **Send timeline to robot** to stream events directly to your Kame firmware over HTTP.
+
+## Send-to-robot API
+
+### Endpoint
+
+`POST /api/send-to-robot`
+
+### Request body
+
+```json
+{
+  "base_url": "http://192.168.4.1",
+  "events": [
+    {"t": 0.0, "kind": "button", "payload": "Start"},
+    {"t": 0.2, "kind": "joystick", "payload": [0, 70]},
+    {"t": 1.1, "kind": "joystick", "payload": [0, 0]},
+    {"t": 1.2, "kind": "button", "payload": "Stop"}
+  ],
+  "send_speed": 0.5,
+  "dry_run": false
+}
+```
+
+### `send_speed` behavior
+
+- Range: `0.25` to `1.0`.
+- `1.0` = normal timeline speed.
+- `0.5` = half speed (dispatch timing is stretched to 2× duration).
+- `0.25` = quarter speed (dispatch timing is stretched to 4× duration).
+
+### Dry run
+
+Set `"dry_run": true` to validate payload and timing metadata without dispatching any robot HTTP requests.
 
 ## JSON formats
 
@@ -63,7 +99,7 @@ Then open http://127.0.0.1:5000
 - The joystick gait uses the same period, leg spread, body height, step height, and phase arrays as the current Kame32 stock gamepad firmware.
 - The button routines are visual approximations for previewing style and timing.
 - The MP3/audio analysis produces a Kame32-style event timeline, not inverse-kinematics choreography.
-- The app uses a CDN import for Three.js, so internet access is needed unless you vendor those files locally.
+- The app tries multiple CDNs for Three.js module loading; if both fail, it automatically falls back to 2D preview so timeline/audio/send workflow can continue.
 - To send directly to hardware, your machine running Flask must be on the Kame AP network and able to reach `192.168.4.1`.
 
 
