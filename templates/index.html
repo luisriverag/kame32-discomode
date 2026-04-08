@@ -343,5 +343,59 @@
     </main>
   </div>
   <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
+  <script>
+    // Fallback: if module loading fails (for example CDN import blocked),
+    // keep audio upload/analyze usable.
+    setTimeout(() => {
+      if (window.__kameAppReady) return;
+
+      const audioFile = document.getElementById('audioFile');
+      const analyzeBtn = document.getElementById('analyzeAudioBtn');
+      const audioMeta = document.getElementById('audioMeta');
+      const audioPreview = document.getElementById('audioPreview');
+      const eventsJson = document.getElementById('eventsJson');
+      const statusBox = document.getElementById('statusBox');
+
+      if (!audioFile || !analyzeBtn || !audioMeta) return;
+
+      const setStatus = (msg) => { if (statusBox) statusBox.textContent = msg; };
+
+      async function runFallbackAnalyze() {
+        const file = audioFile.files && audioFile.files[0];
+        if (!file) {
+          setStatus('Choose an MP3 or other audio file first.');
+          return;
+        }
+        analyzeBtn.disabled = true;
+        audioMeta.textContent = `Analyzing ${file.name} ...`;
+        setStatus('Uploading audio for beat analysis...');
+
+        const formData = new FormData();
+        formData.append('audio', file, file.name);
+        try {
+          const response = await fetch('/api/analyze-audio', { method: 'POST', body: formData });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Analysis failed.');
+
+          if (eventsJson) eventsJson.value = JSON.stringify(data.events, null, 2);
+          if (audioPreview) {
+            audioPreview.src = URL.createObjectURL(file);
+            audioPreview.hidden = false;
+          }
+          audioMeta.textContent = `${data.filename} · ${data.tempo.toFixed(1)} BPM · ${data.duration.toFixed(2)}s · ${data.event_count} events`;
+          setStatus(`Audio analyzed: ${data.tempo.toFixed(1)} BPM, ${data.event_count} events loaded.`);
+        } catch (err) {
+          audioMeta.textContent = `Analysis failed for ${file.name}: ${err.message}`;
+          setStatus(`Audio analysis failed: ${err.message}`);
+        } finally {
+          analyzeBtn.disabled = false;
+        }
+      }
+
+      analyzeBtn.addEventListener('click', runFallbackAnalyze);
+      audioFile.addEventListener('change', runFallbackAnalyze);
+      setStatus('3D preview unavailable; fallback audio analyzer active.');
+    }, 1200);
+  </script>
 </body>
 </html>

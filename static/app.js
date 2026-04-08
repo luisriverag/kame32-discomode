@@ -609,6 +609,7 @@ async function analyzeSelectedAudio() {
     return;
   }
 
+  if (analyzeAudioBtn.disabled) return;
   analyzeAudioBtn.disabled = true;
 
   if (audioPreview.dataset.objectUrl) {
@@ -644,7 +645,7 @@ async function analyzeSelectedAudio() {
     state.analyzedAudio = null;
     state.audioSyncEnabled = false;
     setStatus(`Audio analysis failed: ${err.message}`);
-    audioMeta.textContent = `Analysis failed for ${file.name}.`;
+    audioMeta.textContent = `Analysis failed for ${file.name}: ${err.message}`;
   } finally {
     analyzeAudioBtn.disabled = false;
   }
@@ -793,8 +794,9 @@ clearAudioBtn.addEventListener('click', clearAudioState);
 audioFile.addEventListener('change', () => {
   const file = audioFile.files?.[0];
   if (file) {
-    audioMeta.textContent = `${file.name} selected. Click “Analyze audio into dance”.`;
-    setStatus(`Ready to analyze ${file.name}.`);
+    audioMeta.textContent = `${file.name} selected. Analyzing now...`;
+    setStatus(`Analyzing ${file.name}...`);
+    analyzeSelectedAudio();
   }
 });
 audioPreview.addEventListener('ended', () => {
@@ -853,3 +855,5 @@ requestAnimationFrame((now) => {
   lastFrame = now;
   animate(now);
 });
+
+window.__kameAppReady = true;
