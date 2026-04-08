@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import tempfile
@@ -13,6 +14,9 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.logger.setLevel(logging.INFO)
+
+ALLOWED_AUDIO_SUFFIXES = {'.mp3', '.wav', '.ogg', '.m4a', '.flac'}
 
 
 DEMO_ROUTINES = {
@@ -193,6 +197,9 @@ def analyze_audio():
 
     filename = secure_filename(upload.filename)
     suffix = Path(filename).suffix or '.mp3'
+    if suffix.lower() not in ALLOWED_AUDIO_SUFFIXES:
+        return jsonify({'error': 'Unsupported audio format. Allowed: mp3, wav, ogg, m4a, flac.'}), 400
+
     temp_path = None
 
     try:
@@ -209,11 +216,13 @@ def analyze_audio():
             'event_count': len(events),
         })
     except Exception as exc:
-        return jsonify({'error': f'Audio analysis failed: {exc}'}), 400
+        app.logger.exception('Audio analysis failed for upload %s', filename)
+        return jsonify({'error': 'Audio analysis failed. Verify the file is a valid, non-corrupt audio clip.'}), 400
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    debug_mode = os.getenv('FLASK_DEBUG', '').strip().lower() in {'1', 'true', 'yes'}
+    app.run(debug=debug_mode, host='127.0.0.1', port=5000)
