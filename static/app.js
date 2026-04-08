@@ -1,7 +1,4 @@
 
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js';
-import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js';
-
 const sceneCanvas = document.getElementById('scene');
 const statusBox = document.getElementById('statusBox');
 const transportSlider = document.getElementById('transportSlider');
@@ -65,10 +62,10 @@ const servoMeta = [
 ];
 
 const legOrder = {
-  fl: { hip: 's0', knee: 's2', mount: new THREE.Vector3(1.6, 0.0, 1.0), side: 1, front: 1 },
-  fr: { hip: 's1', knee: 's3', mount: new THREE.Vector3(1.6, 0.0, -1.0), side: -1, front: 1 },
-  rl: { hip: 's5', knee: 's6', mount: new THREE.Vector3(-1.6, 0.0, 1.0), side: 1, front: -1 },
-  rr: { hip: 's4', knee: 's7', mount: new THREE.Vector3(-1.6, 0.0, -1.0), side: -1, front: -1 },
+  fl: { hip: 's0', knee: 's2', mount: { x: 1.6, y: 0.0, z: 1.0 }, side: 1, front: 1 },
+  fr: { hip: 's1', knee: 's3', mount: { x: 1.6, y: 0.0, z: -1.0 }, side: -1, front: 1 },
+  rl: { hip: 's5', knee: 's6', mount: { x: -1.6, y: 0.0, z: 1.0 }, side: 1, front: -1 },
+  rr: { hip: 's4', knee: 's7', mount: { x: -1.6, y: 0.0, z: -1.0 }, side: -1, front: -1 },
 };
 
 const homePose = {
@@ -462,94 +459,120 @@ function poseForCurrentMode() {
   return poseFromJoystick(state.time);
 }
 
-const renderer = new THREE.WebGLRenderer({ canvas: sceneCanvas, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setSize(sceneCanvas.clientWidth, sceneCanvas.clientHeight, false);
-
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x0b0f14, 12, 30);
-
-const camera = new THREE.PerspectiveCamera(45, sceneCanvas.clientWidth / sceneCanvas.clientHeight, 0.1, 100);
-camera.position.set(6.4, 4.6, 7.5);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.8, 0);
-controls.enableDamping = true;
-
-const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.5);
-scene.add(hemi);
-const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-dir.position.set(4, 8, 6);
-scene.add(dir);
-
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(10, 64),
-  new THREE.MeshStandardMaterial({ color: 0x17202a, roughness: 0.92, metalness: 0.05 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -2.25;
-scene.add(ground);
-
-const grid = new THREE.GridHelper(18, 36, 0x334155, 0x1f2937);
-grid.position.y = -2.24;
-scene.add(grid);
-
-const robotGroup = new THREE.Group();
-scene.add(robotGroup);
-
-const body = new THREE.Mesh(
-  new THREE.BoxGeometry(4.0, 1.0, 2.4),
-  new THREE.MeshStandardMaterial({ color: 0x60a5fa, roughness: 0.55, metalness: 0.15 })
-);
-body.position.y = 0.65;
-robotGroup.add(body);
-
-const topShell = new THREE.Mesh(
-  new THREE.BoxGeometry(2.1, 0.35, 1.6),
-  new THREE.MeshStandardMaterial({ color: 0xdbeafe, roughness: 0.45, metalness: 0.08 })
-);
-topShell.position.set(0, 1.2, 0);
-robotGroup.add(topShell);
-
+let THREE = null;
+let controls = { update() {} };
+let renderer = null;
+let scene = null;
+let camera = null;
+let robotGroup = null;
+let body = null;
 const legMeshes = {};
-const upperLen = 1.3;
-const lowerLen = 1.3;
+let threeReady = false;
 
-for (const [legName, def] of Object.entries(legOrder)) {
-  const legRoot = new THREE.Group();
-  legRoot.position.copy(def.mount);
-  legRoot.position.y = 0.25;
-  body.add(legRoot);
+const degToRad = (deg) => (deg * Math.PI) / 180;
 
-  const hipPivot = new THREE.Group();
-  legRoot.add(hipPivot);
+async function init3D() {
+  try {
+    const threeModule = await import('https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js');
+    const controlsModule = await import('https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js');
+    THREE = threeModule;
+    const { OrbitControls } = controlsModule;
 
-  const upper = new THREE.Mesh(
-    new THREE.BoxGeometry(0.34, upperLen, 0.34),
-    new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.45, metalness: 0.1 })
-  );
-  upper.position.y = -upperLen / 2;
-  hipPivot.add(upper);
+    renderer = new THREE.WebGLRenderer({ canvas: sceneCanvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(sceneCanvas.clientWidth, sceneCanvas.clientHeight, false);
 
-  const kneePivot = new THREE.Group();
-  kneePivot.position.y = -upperLen;
-  hipPivot.add(kneePivot);
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0b0f14, 12, 30);
 
-  const lower = new THREE.Mesh(
-    new THREE.BoxGeometry(0.26, lowerLen, 0.26),
-    new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.45, metalness: 0.08 })
-  );
-  lower.position.y = -lowerLen / 2;
-  kneePivot.add(lower);
+    camera = new THREE.PerspectiveCamera(45, sceneCanvas.clientWidth / sceneCanvas.clientHeight, 0.1, 100);
+    camera.position.set(6.4, 4.6, 7.5);
 
-  const foot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.16, 16, 16),
-    new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.6, metalness: 0.1 })
-  );
-  foot.position.y = -lowerLen;
-  kneePivot.add(foot);
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.8, 0);
+    controls.enableDamping = true;
 
-  legMeshes[legName] = { legRoot, hipPivot, kneePivot, foot, side: def.side, front: def.front };
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 1.5);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(4, 8, 6);
+    scene.add(dir);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(10, 64),
+      new THREE.MeshStandardMaterial({ color: 0x17202a, roughness: 0.92, metalness: 0.05 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -2.25;
+    scene.add(ground);
+
+    const grid = new THREE.GridHelper(18, 36, 0x334155, 0x1f2937);
+    grid.position.y = -2.24;
+    scene.add(grid);
+
+    robotGroup = new THREE.Group();
+    scene.add(robotGroup);
+
+    body = new THREE.Mesh(
+      new THREE.BoxGeometry(4.0, 1.0, 2.4),
+      new THREE.MeshStandardMaterial({ color: 0x60a5fa, roughness: 0.55, metalness: 0.15 })
+    );
+    body.position.y = 0.65;
+    robotGroup.add(body);
+
+    const topShell = new THREE.Mesh(
+      new THREE.BoxGeometry(2.1, 0.35, 1.6),
+      new THREE.MeshStandardMaterial({ color: 0xdbeafe, roughness: 0.45, metalness: 0.08 })
+    );
+    topShell.position.set(0, 1.2, 0);
+    robotGroup.add(topShell);
+
+    const upperLen = 1.3;
+    const lowerLen = 1.3;
+
+    for (const [legName, def] of Object.entries(legOrder)) {
+      const legRoot = new THREE.Group();
+      legRoot.position.set(def.mount.x, def.mount.y, def.mount.z);
+      legRoot.position.y = 0.25;
+      body.add(legRoot);
+
+      const hipPivot = new THREE.Group();
+      legRoot.add(hipPivot);
+
+      const upper = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34, upperLen, 0.34),
+        new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.45, metalness: 0.1 })
+      );
+      upper.position.y = -upperLen / 2;
+      hipPivot.add(upper);
+
+      const kneePivot = new THREE.Group();
+      kneePivot.position.y = -upperLen;
+      hipPivot.add(kneePivot);
+
+      const lower = new THREE.Mesh(
+        new THREE.BoxGeometry(0.26, lowerLen, 0.26),
+        new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.45, metalness: 0.08 })
+      );
+      lower.position.y = -lowerLen / 2;
+      kneePivot.add(lower);
+
+      const foot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.6, metalness: 0.1 })
+      );
+      foot.position.y = -lowerLen;
+      kneePivot.add(foot);
+
+      legMeshes[legName] = { legRoot, hipPivot, kneePivot, foot, side: def.side, front: def.front };
+    }
+
+    threeReady = true;
+    resizeRenderer();
+  } catch (err) {
+    console.warn('3D module unavailable; running without 3D scene.', err);
+    setStatus('3D module failed to load (CDN blocked). Timeline/audio/send controls remain available.');
+  }
 }
 
 function updateRobotPose(pose) {
@@ -561,28 +584,6 @@ function updateRobotPose(pose) {
   const rearAvg = (normalized.s4 + normalized.s5) / 2;
   const kneeAvg = (normalized.s2 + normalized.s3 + normalized.s6 + normalized.s7) / 4;
 
-  robotGroup.position.y = lerp(-0.25, 0.55, clamp((100 - kneeAvg) / 35, 0.05, 0.95));
-  robotGroup.rotation.z = THREE.MathUtils.degToRad((leftAvg - rightAvg) * 0.18);
-  robotGroup.rotation.x = THREE.MathUtils.degToRad((rearAvg - frontAvg) * 0.12);
-  body.rotation.y = THREE.MathUtils.degToRad((normalized.s0 - normalized.s1 + normalized.s5 - normalized.s4) * 0.04);
-
-  for (const [legName, def] of Object.entries(legOrder)) {
-    const hipKey = def.hip;
-    const kneeKey = def.knee;
-    const leg = legMeshes[legName];
-    const hipAngle = normalized[hipKey];
-    const kneeAngle = normalized[kneeKey];
-
-    const hipPitch = (hipAngle - 90) * 0.55;
-    const sideLift = (hipAngle - 90) * 0.12 * leg.side;
-    const kneePitch = (kneeAngle - 90) * 0.78;
-
-    leg.legRoot.rotation.z = THREE.MathUtils.degToRad(sideLift);
-    leg.hipPivot.rotation.z = 0;
-    leg.hipPivot.rotation.x = THREE.MathUtils.degToRad(hipPitch);
-    leg.kneePivot.rotation.x = THREE.MathUtils.degToRad(kneePitch);
-  }
-
   servoReadout.innerHTML = '';
   for (const meta of servoMeta) {
     const chip = document.createElement('div');
@@ -590,9 +591,35 @@ function updateRobotPose(pose) {
     chip.textContent = `${meta.key} ${normalized[meta.key].toFixed(0)}°`;
     servoReadout.appendChild(chip);
   }
+
+  if (!threeReady || !robotGroup || !body) return;
+
+  robotGroup.position.y = lerp(-0.25, 0.55, clamp((100 - kneeAvg) / 35, 0.05, 0.95));
+  robotGroup.rotation.z = degToRad((leftAvg - rightAvg) * 0.18);
+  robotGroup.rotation.x = degToRad((rearAvg - frontAvg) * 0.12);
+  body.rotation.y = degToRad((normalized.s0 - normalized.s1 + normalized.s5 - normalized.s4) * 0.04);
+
+  for (const [legName, def] of Object.entries(legOrder)) {
+    const hipKey = def.hip;
+    const kneeKey = def.knee;
+    const leg = legMeshes[legName];
+    if (!leg) continue;
+    const hipAngle = normalized[hipKey];
+    const kneeAngle = normalized[kneeKey];
+
+    const hipPitch = (hipAngle - 90) * 0.55;
+    const sideLift = (hipAngle - 90) * 0.12 * leg.side;
+    const kneePitch = (kneeAngle - 90) * 0.78;
+
+    leg.legRoot.rotation.z = degToRad(sideLift);
+    leg.hipPivot.rotation.z = 0;
+    leg.hipPivot.rotation.x = degToRad(hipPitch);
+    leg.kneePivot.rotation.x = degToRad(kneePitch);
+  }
 }
 
 function resizeRenderer() {
+  if (!renderer || !camera) return;
   const width = sceneCanvas.clientWidth;
   const height = sceneCanvas.clientHeight;
   renderer.setSize(width, height, false);
@@ -986,7 +1013,7 @@ function animate(now) {
   updateRobotPose(pose);
   syncTransport();
   controls.update();
-  renderer.render(scene, camera);
+  if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
 Promise.all([fetchPresets()])
@@ -997,7 +1024,7 @@ Promise.all([fetchPresets()])
   })
   .catch((err) => setStatus(`Preset load failed: ${err.message}`));
 
-resizeRenderer();
+init3D();
 requestAnimationFrame((now) => {
   lastFrame = now;
   animate(now);
