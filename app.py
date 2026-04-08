@@ -19,6 +19,11 @@ app.logger.setLevel(logging.INFO)
 ALLOWED_AUDIO_SUFFIXES = {'.mp3', '.wav', '.ogg', '.m4a', '.flac'}
 
 
+@app.errorhandler(413)
+def request_entity_too_large(_err):
+    return jsonify({'error': 'Uploaded file is too large. Max size is 50 MB.'}), 413
+
+
 DEMO_ROUTINES = {
     "mp3_style_demo": [
         {"t": 0.0, "kind": "button", "payload": "Start"},
