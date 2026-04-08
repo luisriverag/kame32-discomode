@@ -188,6 +188,18 @@
       background: rgba(21, 51, 42, 0.65);
       color: #d7f8ea;
     }
+    .notice {
+      border: 1px solid #6b4f1f;
+      background: rgba(90, 61, 13, 0.24);
+      color: #f7d9a3;
+      border-radius: 10px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 0.86rem;
+    }
+    .notice strong {
+      color: #ffe7bf;
+    }
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .viewer, #scene { min-height: 70vh; height: 70vh; }
@@ -227,6 +239,7 @@
         </div>
         <audio id="audioPreview" controls hidden preload="metadata" playsinline style="width: 100%; margin-top: 10px;"></audio>
         <p class="tiny" id="audioMeta">Choose an MP3, then the server will extract beats and load an event timeline for preview.</p>
+        <div id="moduleWarning" class="notice" hidden></div>
         <div class="row" style="margin-top: 10px;">
           <button id="openSendPanelBtn">Open send-to-robot panel</button>
           <div class="tiny">If you cannot find the send button, this jumps directly to the Event timeline panel.</div>
@@ -398,10 +411,18 @@
       const audioPreview = document.getElementById('audioPreview');
       const eventsJson = document.getElementById('eventsJson');
       const statusBox = document.getElementById('statusBox');
+      const moduleWarning = document.getElementById('moduleWarning');
+      const sendToRobotBtn = document.getElementById('sendToRobotBtn');
+      const openSendPanelBtn = document.getElementById('openSendPanelBtn');
 
       if (!audioFile || !analyzeBtn || !audioMeta) return;
 
       const setStatus = (msg) => { if (statusBox) statusBox.textContent = msg; };
+      const warn = (msg) => {
+        if (!moduleWarning) return;
+        moduleWarning.hidden = false;
+        moduleWarning.innerHTML = `<strong>3D controls unavailable.</strong> ${msg}`;
+      };
 
       async function runFallbackAnalyze() {
         const file = audioFile.files && audioFile.files[0];
@@ -437,7 +458,17 @@
 
       analyzeBtn.addEventListener('click', runFallbackAnalyze);
       audioFile.addEventListener('change', runFallbackAnalyze);
-      setStatus('3D preview unavailable; fallback audio analyzer active.');
+      openSendPanelBtn?.addEventListener('click', () => {
+        warn('The advanced timeline/send workflow needs the main app module. Check browser console/network for blocked CDN imports.');
+        setStatus('Main app module failed to load, so send/preview controls are disabled.');
+      });
+      sendToRobotBtn?.addEventListener('click', (event) => {
+        event.preventDefault();
+        warn('Send-to-robot is disabled in fallback mode. Resolve module loading first, then reload this page.');
+        setStatus('Send to robot is unavailable until main app module loads.');
+      });
+      warn('Fallback audio analysis is active. Audio can be analyzed, but timeline preview and robot send controls are disabled.');
+      setStatus('3D preview unavailable; fallback analyzer active.');
     }, 1200);
   </script>
 </body>
