@@ -466,6 +466,7 @@ let scene = null;
 let camera = null;
 let robotGroup = null;
 let body = null;
+let fallbackContext2D = null;
 const legMeshes = {};
 let threeReady = false;
 
@@ -571,7 +572,98 @@ async function init3D() {
     resizeRenderer();
   } catch (err) {
     console.warn('3D module unavailable; running without 3D scene.', err);
+    init2DFallback();
     setStatus('3D module failed to load (CDN blocked). Timeline/audio/send controls remain available.');
+  }
+}
+
+function init2DFallback() {
+  if (fallbackContext2D) return fallbackContext2D;
+  fallbackContext2D = sceneCanvas.getContext('2d');
+  resizeRenderer();
+  return fallbackContext2D;
+}
+
+function drawLeg2D(ctx, x, y, side, hipDeg, kneeDeg, scale) {
+  const upperLen = 52 * scale;
+  const lowerLen = 52 * scale;
+  const hip = (hipDeg - 90) * 0.55;
+  const knee = (kneeDeg - 90) * 0.78;
+  const baseAngle = Math.PI / 2;
+  const hipAngle = baseAngle + degToRad(hip) + side * 0.08;
+  const kneeAngle = hipAngle + degToRad(knee);
+
+  const kneeX = x + Math.cos(hipAngle) * upperLen;
+  const kneeY = y + Math.sin(hipAngle) * upperLen;
+  const footX = kneeX + Math.cos(kneeAngle) * lowerLen;
+  const footY = kneeY + Math.sin(kneeAngle) * lowerLen;
+
+  ctx.lineWidth = 6 * scale;
+  ctx.strokeStyle = '#dbeafe';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(kneeX, kneeY);
+  ctx.stroke();
+
+  ctx.lineWidth = 5 * scale;
+  ctx.strokeStyle = '#94a3b8';
+  ctx.beginPath();
+  ctx.moveTo(kneeX, kneeY);
+  ctx.lineTo(footX, footY);
+  ctx.stroke();
+
+  ctx.fillStyle = '#cbd5e1';
+  ctx.beginPath();
+  ctx.arc(kneeX, kneeY, 4 * scale, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#64748b';
+  ctx.beginPath();
+  ctx.arc(footX, footY, 4 * scale, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function renderFallback2D(pose) {
+  const ctx = fallbackContext2D || init2DFallback();
+  if (!ctx) return;
+
+  const width = sceneCanvas.clientWidth;
+  const height = sceneCanvas.clientHeight;
+  if (width <= 0 || height <= 0) return;
+
+  sceneCanvas.width = Math.max(1, Math.floor(width * Math.min(window.devicePixelRatio || 1, 2)));
+  sceneCanvas.height = Math.max(1, Math.floor(height * Math.min(window.devicePixelRatio || 1, 2)));
+  ctx.setTransform(sceneCanvas.width / width, 0, 0, sceneCanvas.height / height, 0, 0);
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, '#182333');
+  gradient.addColorStop(1, '#0b0f14');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  const cx = width * 0.54;
+  const cy = height * 0.40;
+  const scale = Math.max(0.75, Math.min(1.45, Math.min(width, height) / 620));
+
+  ctx.fillStyle = '#60a5fa';
+  ctx.strokeStyle = '#2d5f98';
+  ctx.lineWidth = 3 * scale;
+  const bodyW = 170 * scale;
+  const bodyH = 54 * scale;
+  const bodyX = cx - bodyW / 2;
+  const bodyY = cy - bodyH / 2;
+  ctx.fillRect(bodyX, bodyY, bodyW, bodyH);
+  ctx.strokeRect(bodyX, bodyY, bodyW, bodyH);
+
+  const mounts = {
+    fl: { x: bodyX + bodyW * 0.83, y: bodyY + bodyH * 0.38, side: 1, hip: pose.s0, knee: pose.s2 },
+    fr: { x: bodyX + bodyW * 0.83, y: bodyY + bodyH * 0.62, side: -1, hip: pose.s1, knee: pose.s3 },
+    rl: { x: bodyX + bodyW * 0.17, y: bodyY + bodyH * 0.38, side: 1, hip: pose.s5, knee: pose.s6 },
+    rr: { x: bodyX + bodyW * 0.17, y: bodyY + bodyH * 0.62, side: -1, hip: pose.s4, knee: pose.s7 },
+  };
+
+  for (const leg of Object.values(mounts)) {
+    drawLeg2D(ctx, leg.x, leg.y, leg.side, leg.hip, leg.knee, scale);
   }
 }
 
@@ -619,12 +711,17 @@ function updateRobotPose(pose) {
 }
 
 function resizeRenderer() {
-  if (!renderer || !camera) return;
   const width = sceneCanvas.clientWidth;
   const height = sceneCanvas.clientHeight;
-  renderer.setSize(width, height, false);
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
+  if (renderer && camera) {
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  } else if (fallbackContext2D) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    sceneCanvas.width = Math.max(1, Math.floor(width * dpr));
+    sceneCanvas.height = Math.max(1, Math.floor(height * dpr));
+  }
 }
 window.addEventListener('resize', resizeRenderer);
 
@@ -1013,7 +1110,11 @@ function animate(now) {
   updateRobotPose(pose);
   syncTransport();
   controls.update();
-  if (renderer && scene && camera) renderer.render(scene, camera);
+  if (renderer && scene && camera) {
+    renderer.render(scene, camera);
+  } else {
+    renderFallback2D(pose);
+  }
 }
 
 Promise.all([fetchPresets()])
