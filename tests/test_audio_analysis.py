@@ -77,7 +77,8 @@ class AudioAnalysisTests(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload['ok'])
         self.assertEqual(payload['mode'], 'dry_run')
-        self.assertEqual(payload['event_count'], 4)
+        # Safe bookends add an early neutral joystick event when one is missing.
+        self.assertEqual(payload['event_count'], 5)
         self.assertEqual(payload['send_speed'], 1.0)
 
     def test_send_to_robot_dry_run_normalizes_base_url(self):
@@ -130,6 +131,21 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload['send_speed'], 0.5)
+
+    def test_send_to_robot_dry_run_bookends_early_events_without_reordering_failure(self):
+        events = [
+            {'t': 0.05, 'kind': 'joystick', 'payload': [10, 10]},
+            {'t': 0.2, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        response = self.client.post('/api/send-to-robot', json={
+            'base_url': 'http://192.168.4.1',
+            'dry_run': True,
+            'events': events,
+        })
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        # Safe bookends add a Start and early neutral joystick event.
+        self.assertEqual(payload['event_count'], 4)
 
     def test_send_to_robot_network_error_includes_code_and_details(self):
         events = [
