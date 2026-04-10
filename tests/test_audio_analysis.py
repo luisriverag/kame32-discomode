@@ -164,6 +164,22 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertIn('Could not reach robot', payload['error'])
         self.assertIn('timed out', payload['details'])
 
+    def test_send_to_robot_worker_timeout_is_reported_as_unreachable(self):
+        events = [
+            {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+            {'t': 0.1, 'kind': 'button', 'payload': 'Stop'},
+        ]
+        with patch('app._send_event_timeline_to_robot', side_effect=TimeoutError('timed out')):
+            response = self.client.post('/api/send-to-robot', json={
+                'base_url': 'http://192.168.4.1',
+                'events': events,
+            })
+
+        self.assertEqual(response.status_code, 502)
+        payload = response.get_json()
+        self.assertEqual(payload['code'], 'robot_unreachable')
+        self.assertIn('timed out', payload['details'])
+
     def test_send_to_robot_unexpected_error_includes_debug_details(self):
         events = [
             {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
