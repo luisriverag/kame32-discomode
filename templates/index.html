@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Train</title>
+  <title>Kame32 DanceMode</title>
   <style>
     :root {
       color-scheme: dark;
@@ -17,13 +17,20 @@
       --good: #34d399;
       --warn: #fbbf24;
     }
+
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
     }
+
+    body > h1 {
+      margin: 16px;
+    }
+
     .layout {
       display: grid;
       grid-template-columns: 360px minmax(0, 1fr) 360px;
@@ -209,9 +216,12 @@
   </style>
 </head>
 <body>
-  <div class="layout">
+
+  <h1>Kame32 DanceMode School</h1>
+
+  <div class="layout">  
     <aside class="sidebar">
-      <h1>1. Load & Train</h1>
+      <h1>1. Load music</h1>
 
       <div class="card" id="buttonCard" hidden>
         <h2>Button routine</h2>
@@ -227,7 +237,6 @@
       </div>
 
       <div class="card">
-        <h2>Load MP3 and auto-build dance</h2>
         <label for="audioFile">Audio file</label>
         <input id="audioFile" type="file" accept=".mp3,audio/*">
         <div class="row" style="margin-top: 10px;">
@@ -253,11 +262,6 @@
           <div>
             <label for="speed">Playback speed</label>
             <input id="speed" type="number" min="0.25" max="3" step="0.05" value="1.0">
-            <div class="speed-presets">
-              <button type="button" data-speed-preset="1" class="active">100%</button>
-              <button type="button" data-speed-preset="0.5">50%</button>
-              <button type="button" data-speed-preset="0.25">25%</button>
-            </div>
           </div>
           <div>
             <label for="modeSelect">Source</label>
@@ -273,7 +277,7 @@
       </div>
 
       <div class="card" id="joystickCard">
-        <h2>Joystick gait</h2>
+        <h3>Joystick gait</h3>
         <div class="row">
           <div>
             <label for="joyX">Turn / x</label>
@@ -315,7 +319,7 @@
       </div>
 
       <div class="card" id="keyframesCard" hidden>
-        <h2>Keyframe JSON</h2>
+        <h3>Keyframe JSON</h3>
         <p class="tiny">Paste <code>[{"t":0,"pose":{"s0":90,...}}, ...]</code>. The preview interpolates between frames.</p>
         <textarea id="keyframesJson"></textarea>
         <div class="row" style="margin-top: 10px;">
@@ -327,7 +331,7 @@
     </aside>
 
     <main class="viewer">
-      <h1>2. Simulate</h1>
+      <h1>2. Simulate moves</h1>
 
       <div class="meter">
         <div class="meter-grid">
@@ -352,7 +356,7 @@
     <aside class="robot-sidebar">
       <h1>3. Dance Kame, dance!</h1>
       <div class="card" id="eventsCard">
-        <h2>Event timeline JSON</h2>
+        <h3>Event timeline JSON</h3>
         <p class="tiny">Paste an array of events using the same shape as the MP3 script: <code>{"t": 1.2, "kind": "joystick", "payload": [0, 70]}</code>.</p>
         <textarea id="eventsJson"></textarea>
         <div class="row" style="margin-top: 10px;">
