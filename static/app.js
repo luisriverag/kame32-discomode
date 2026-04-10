@@ -1067,6 +1067,20 @@ openSendPanelBtn.addEventListener('click', () => {
   setWorkflowStage('send');
   setStatus('Opened Event timeline panel. Use "Send timeline to robot" there.');
 });
+
+async function startAudioPlaybackForRobotSend() {
+  if (!audioPreview.src || audioPreview.hidden) return false;
+  try {
+    await waitForAudioReady();
+    audioPreview.currentTime = 0;
+    await audioPreview.play();
+    return true;
+  } catch (err) {
+    console.warn('Audio could not be started for robot send:', err);
+    return false;
+  }
+}
+
 sendToRobotBtn.addEventListener('click', async () => {
   if (sendToRobotBtn.disabled) return;
   sendToRobotBtn.disabled = true;
@@ -1076,7 +1090,8 @@ sendToRobotBtn.addEventListener('click', async () => {
     const baseUrl = (robotBaseUrlInput?.value || '').trim() || 'http://192.168.4.1';
     const sendSpeed = clamp(Number(robotSendSpeedInput?.value || 1), 0.25, 1);
     const sendPercent = Math.round(sendSpeed * 100);
-    setStatus(`Sending ${parsed.length} events to ${baseUrl} at ${sendPercent}% speed...`);
+    const startedMusic = await startAudioPlaybackForRobotSend();
+    setStatus(`Sending ${parsed.length} events to ${baseUrl} at ${sendPercent}% speed...${startedMusic ? ' Music playback started.' : ''}`);
     const response = await fetch('/api/send-to-robot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
