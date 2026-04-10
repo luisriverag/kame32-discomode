@@ -24,16 +24,6 @@
       background: var(--bg);
       color: var(--text);
     }
-    .school-banner {
-      padding: 16px 16px 0;
-    }
-    .school-card {
-      max-width: 1500px;
-      margin: 0 auto 14px;
-    }
-    .school-card h2 {
-      margin-top: 0;
-    }
     .layout {
       display: grid;
       grid-template-columns: 360px minmax(0, 1fr) 360px;
@@ -198,30 +188,6 @@
       margin: 0 0 8px;
       letter-spacing: 0.01em;
     }
-    .workflow {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .workflow-step {
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-      background: rgba(26, 35, 45, 0.7);
-      color: var(--muted);
-      font-size: 0.86rem;
-      min-height: 96px;
-    }
-    .workflow-step.active {
-      border-color: #2d5f98;
-      background: rgba(23, 48, 79, 0.65);
-      color: var(--text);
-    }
-    .workflow-step.done {
-      border-color: #1f6b54;
-      background: rgba(21, 51, 42, 0.65);
-      color: #d7f8ea;
-    }
     .notice {
       border: 1px solid #6b4f1f;
       background: rgba(90, 61, 13, 0.24);
@@ -239,22 +205,10 @@
       .viewer { min-height: 70vh; }
       #scene { min-height: 52vh; }
       .sidebar, .robot-sidebar { border-right: 0; border-left: 0; border-bottom: 1px solid var(--border); }
-      .workflow { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <section class="school-banner">
-    <div class="card school-card">
-      <h1>Kame32 Disco Mode school</h1>
-      <div class="workflow">
-        <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
-        <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
-        <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Send timeline directly to Kame at <code>192.168.4.1</code>.</div>
-      </div>
-    </div>
-  </section>
-
   <div class="layout">
     <aside class="sidebar">
       <h1>1. Load & Train</h1>
