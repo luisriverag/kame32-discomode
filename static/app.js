@@ -471,6 +471,26 @@ let threeReady = false;
 
 const degToRad = (deg) => (deg * Math.PI) / 180;
 
+async function importOrbitControlsWithPatchedThree(controlsUrl, threeUrl) {
+  const response = await fetch(controlsUrl, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch OrbitControls module (${response.status}).`);
+  }
+
+  const sourceText = await response.text();
+  const patchedText = sourceText
+    .replace(/from\s+['"]three['"]/g, `from "${threeUrl}"`)
+    .replace(/from\s+['"]three\/src\/Three['"]/g, `from "${threeUrl}"`);
+
+  const blob = new Blob([patchedText], { type: 'text/javascript' });
+  const blobUrl = URL.createObjectURL(blob);
+  try {
+    return await import(blobUrl);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
 async function init3D() {
   const moduleSources = [
     {
@@ -499,8 +519,15 @@ async function init3D() {
       try {
         // eslint-disable-next-line no-await-in-loop
         threeModule = await import(source.three);
-        // eslint-disable-next-line no-await-in-loop
-        controlsModule = await import(source.controls);
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          controlsModule = await import(source.controls);
+        } catch (controlsErr) {
+          if (source.name !== 'local-static') throw controlsErr;
+          console.warn('Local OrbitControls import failed; retrying with patched local module specifier.', controlsErr);
+          // eslint-disable-next-line no-await-in-loop
+          controlsModule = await importOrbitControlsWithPatchedThree(source.controls, source.three);
+        }
         loadedFrom = source.name;
         break;
       } catch (sourceErr) {
