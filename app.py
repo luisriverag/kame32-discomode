@@ -94,19 +94,22 @@ def presets():
 
 def zscore_normalize(x: np.ndarray) -> np.ndarray:
     x = np.asarray(x, dtype=float)
+    if x.size == 0:
+        return np.zeros_like(x)
+    lo, hi = np.percentile(x, [5, 95])
+    x = np.clip(x, lo, hi)
     std = float(np.std(x))
     if std < 1e-9:
         return np.zeros_like(x)
     return (x - float(np.mean(x))) / std
 
 
-def classify_section(rms: float, onset: float) -> str:
-    score = 0.65 * rms + 0.35 * onset
-    if score > 1.1:
+def classify_section(energy: float, peak: float, transition: float, *, hi_energy: float, lo_energy: float, hi_peak: float, hi_transition: float) -> str:
+    if energy >= hi_energy or peak >= hi_peak or transition >= hi_transition:
         return 'high'
-    if score > 0.2:
-        return 'mid'
-    return 'low'
+    if energy <= lo_energy and peak < hi_peak * 0.7:
+        return 'low'
+    return 'mid'
 
 
 def _sample_feature(times: np.ndarray, values: np.ndarray, t: float) -> float:
@@ -122,8 +125,94 @@ def _fallback_beat_grid(duration: float, tempo: float | None) -> np.ndarray:
     return np.linspace(0.0, max(0.0, duration - 1e-3), beat_count)
 
 
+def _infer_bar_offset(accent: np.ndarray, bass: np.ndarray) -> int:
+    if len(accent) < 8:
+        return 0
+
+    scores = []
+    for offset in range(4):
+        idx = np.arange(offset, len(accent), 4)
+        if len(idx) == 0:
+            scores.append(-1e9)
+            continue
+        score = float(np.mean(accent[idx] + 0.35 * bass[idx]))
+        scores.append(score)
+    return int(np.argmax(scores))
+
+
+def _smooth_section_labels(labels: list[str]) -> list[str]:
+    if len(labels) < 3:
+        return labels
+
+    smoothed = labels[:]
+    for i in range(1, len(labels) - 1):
+        if labels[i - 1] == labels[i + 1] and labels[i] != labels[i - 1]:
+            smoothed[i] = labels[i - 1]
+    return smoothed
+
+
+def _append_joystick(events: list[dict], t: float, x: int, y: int) -> None:
+    events.append({'t': round(float(t), 3), 'kind': 'joystick', 'payload': [int(x), int(y)]})
+
+
+def _emit_bar_pattern(events: list[dict], beat_times: np.ndarray, start_idx: int, section: str, accent: np.ndarray, brightness: np.ndarray, phrase_index: int) -> None:
+    orientation = 1 if (phrase_index % 2 == 0) else -1
+    mirror = -1 if ((start_idx // 4) % 2) else 1
+    sign = orientation * mirror
+
+    for local_beat in range(4):
+        beat_idx = start_idx + local_beat
+        if beat_idx >= len(beat_times) - 1:
+            break
+
+        t = float(beat_times[beat_idx])
+        next_t = float(beat_times[beat_idx + 1])
+        gap = max(0.18, next_t - t)
+        beat_accent = float(accent[beat_idx])
+        beat_brightness = float(brightness[beat_idx])
+
+        if section == 'high':
+            x = int(sign * (54 if local_beat in (0, 2) else -54))
+            y = 18 if beat_brightness >= 0 else -10
+            _append_joystick(events, t, x, y)
+            _append_joystick(events, t + gap * 0.46, int(-x * 0.45), 0)
+            if local_beat == 3 or beat_accent < 0:
+                _append_joystick(events, t + gap * 0.86, 0, 0)
+        elif section == 'mid':
+            x = int(sign * (30 if local_beat in (0, 3) else -30))
+            y = 24 if local_beat in (0, 2) else 12
+            _append_joystick(events, t, x, y)
+            if beat_accent > 0.35:
+                _append_joystick(events, t + gap * 0.52, int(-x * 0.45), 0)
+            _append_joystick(events, t + gap * 0.82, 0, 0)
+        else:
+            if local_beat in (0, 2):
+                x = int(sign * (18 if local_beat == 0 else -18))
+                _append_joystick(events, t, x, 8)
+            _append_joystick(events, t + gap * 0.72, 0, 0)
+
+
+def _compact_events(events: list[dict]) -> list[dict]:
+    compact: list[dict] = []
+    last_joy_payload: tuple[int, int] | None = None
+    last_joy_t = -999.0
+
+    for event in events:
+        if event['kind'] == 'joystick':
+            payload = tuple(int(v) for v in event['payload'])
+            threshold = 0.28 if payload == (0, 0) else 0.12
+            if payload == last_joy_payload and (float(event['t']) - last_joy_t) < threshold:
+                continue
+            last_joy_payload = payload
+            last_joy_t = float(event['t'])
+            event = {**event, 'payload': list(payload)}
+        compact.append(event)
+    return compact
+
+
 def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, float]:
-    rng = random.Random(seed)
+    del seed
+
     decoder_stderr = StringIO()
     with redirect_stderr(decoder_stderr):
         y, sr = librosa.load(audio_path, sr=22050, mono=True)
@@ -132,100 +221,132 @@ def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, flo
         app.logger.info('Audio decoder notes while loading %s: %s', audio_path, decoder_notes)
     duration = float(librosa.get_duration(y=y, sr=sr))
 
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-    tempo_raw, beat_frames = librosa.beat.beat_track(y=y, sr=sr, onset_envelope=onset_env, trim=False)
+    hop_length = 512
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+    onset_env = librosa.onset.onset_strength(y=y_percussive, sr=sr, hop_length=hop_length)
+    tempo_raw, beat_frames = librosa.beat.beat_track(y=y_percussive, sr=sr, onset_envelope=onset_env, trim=False)
     tempo = float(np.atleast_1d(tempo_raw)[0]) if np.size(np.atleast_1d(tempo_raw)) else 0.0
     beat_times = librosa.frames_to_time(beat_frames, sr=sr)
 
-    if len(beat_times) < 4:
+    if len(beat_times) < 8:
         app.logger.info('Sparse beat detection (%s beats); using fallback beat grid for %s', len(beat_times), audio_path)
         beat_times = _fallback_beat_grid(duration, tempo)
 
-    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
-    rms_t = librosa.times_like(rms, sr=sr, hop_length=512)
-    onset_t = librosa.times_like(onset_env, sr=sr)
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop_length)[0]
+    spectral_centroid = librosa.feature.spectral_centroid(y=y_harmonic, sr=sr, hop_length=hop_length)[0]
+    stft = np.abs(librosa.stft(y=y, n_fft=2048, hop_length=hop_length))
+    freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
+    bass_band = (freqs >= 20) & (freqs <= 180)
+    bass_energy = np.mean(stft[bass_band], axis=0)
+
+    rms_t = librosa.times_like(rms, sr=sr, hop_length=hop_length)
+    onset_t = librosa.times_like(onset_env, sr=sr, hop_length=hop_length)
+    centroid_t = librosa.times_like(spectral_centroid, sr=sr, hop_length=hop_length)
+    bass_t = librosa.times_like(bass_energy, sr=sr, hop_length=hop_length)
 
     rms_z = zscore_normalize(rms)
     onset_z = zscore_normalize(onset_env)
+    centroid_z = zscore_normalize(spectral_centroid)
+    bass_z = zscore_normalize(bass_energy)
 
-    beat_strengths = []
-    for t in beat_times:
-        beat_strengths.append(
-            (_sample_feature(rms_t, rms_z, float(t)), _sample_feature(onset_t, onset_z, float(t)))
-        )
+    beat_rms = np.array([_sample_feature(rms_t, rms_z, float(t)) for t in beat_times])
+    beat_onset = np.array([_sample_feature(onset_t, onset_z, float(t)) for t in beat_times])
+    beat_centroid = np.array([_sample_feature(centroid_t, centroid_z, float(t)) for t in beat_times])
+    beat_bass = np.array([_sample_feature(bass_t, bass_z, float(t)) for t in beat_times])
+    beat_accent = 0.40 * beat_rms + 0.35 * beat_onset + 0.25 * beat_bass
 
-    events: list[dict] = []
-    events.append({'t': 0.00, 'kind': 'button', 'payload': 'Start'})
-    events.append({'t': 0.15, 'kind': 'joystick', 'payload': [0, 0]})
+    bar_offset = _infer_bar_offset(beat_accent, beat_bass)
+    bar_starts = list(range(bar_offset, len(beat_times) - 1, 4))
 
-    strong_threshold = float(np.percentile([o for _, o in beat_strengths], 80))
-    huge_threshold = float(np.percentile([r + o for r, o in beat_strengths], 90))
-    last_big_move_t = -999.0
+    if not bar_starts:
+        bar_starts = [0]
 
-    for i, t in enumerate(beat_times[:-1]):
-        t = float(t)
-        next_t = float(beat_times[i + 1])
-        gap = max(0.18, next_t - t)
-        rms_i, onset_i = beat_strengths[i]
-        section = classify_section(rms_i, onset_i)
-        bar_pos = i % 8
-        long_move_allowed = (t - last_big_move_t) > 2.2
-        combo_score = rms_i + onset_i
+    bar_energy_values: list[float] = []
+    bar_peak_values: list[float] = []
+    bar_transition_values: list[float] = []
+    last_bar_energy = 0.0
 
-        if bar_pos == 0 and combo_score >= huge_threshold and long_move_allowed:
-            label = 'Y' if section == 'high' else 'X'
+    for start_idx in bar_starts:
+        idx = np.arange(start_idx, min(start_idx + 4, len(beat_times)))
+        bar_energy = float(np.mean(beat_accent[idx]) + 0.20 * beat_accent[idx[0]] + 0.10 * beat_bass[idx[0]])
+        bar_peak = float(np.max(beat_accent[idx]))
+        transition = max(0.0, bar_energy - last_bar_energy) if bar_energy_values else 0.0
+        bar_energy_values.append(bar_energy)
+        bar_peak_values.append(bar_peak)
+        bar_transition_values.append(transition)
+        last_bar_energy = bar_energy
+
+    bar_energy_arr = np.asarray(bar_energy_values, dtype=float)
+    bar_peak_arr = np.asarray(bar_peak_values, dtype=float)
+    bar_transition_arr = np.asarray(bar_transition_values, dtype=float)
+
+    hi_energy = float(np.percentile(bar_energy_arr, 72))
+    lo_energy = float(np.percentile(bar_energy_arr, 32))
+    hi_peak = float(np.percentile(bar_peak_arr, 78))
+    hi_transition = float(np.percentile(bar_transition_arr, 80))
+
+    section_labels = [
+        classify_section(energy, peak, transition, hi_energy=hi_energy, lo_energy=lo_energy, hi_peak=hi_peak, hi_transition=hi_transition)
+        for energy, peak, transition in zip(bar_energy_arr, bar_peak_arr, bar_transition_arr)
+    ]
+    section_labels = _smooth_section_labels(section_labels)
+
+    phrase_energy = np.asarray([
+        float(np.mean(bar_energy_arr[i:i + 4]))
+        for i in range(0, len(bar_energy_arr), 4)
+    ], dtype=float)
+    phrase_jump = np.diff(np.r_[phrase_energy[:1], phrase_energy]) if len(phrase_energy) else np.asarray([], dtype=float)
+    phrase_hi = float(np.percentile(phrase_energy, 75)) if len(phrase_energy) else 0.0
+    jump_hi = float(np.percentile(phrase_jump, 80)) if len(phrase_jump) else 0.0
+    accent_hi = float(np.percentile(bar_peak_arr, 88))
+    transition_hi = float(np.percentile(bar_transition_arr, 82))
+
+    events: list[dict] = [
+        {'t': 0.00, 'kind': 'button', 'payload': 'Start'},
+        {'t': 0.15, 'kind': 'joystick', 'payload': [0, 0]},
+    ]
+    last_button_t = -999.0
+
+    for bar_i, start_idx in enumerate(bar_starts):
+        if start_idx >= len(beat_times) - 1:
+            break
+
+        t = float(beat_times[start_idx])
+        phrase_i = bar_i // 4
+        phrase_energy_i = float(phrase_energy[phrase_i]) if phrase_i < len(phrase_energy) else 0.0
+        phrase_jump_i = float(phrase_jump[phrase_i]) if phrase_i < len(phrase_jump) else 0.0
+
+        if bar_i % 4 == 0 and phrase_energy_i >= phrase_hi and (t - last_button_t) > 4.0:
+            label = 'Y' if phrase_jump_i >= jump_hi else 'Z'
             events.append({'t': round(t, 3), 'kind': 'button', 'payload': label})
-            events.append({'t': round(t + min(1.4, gap * 0.8), 3), 'kind': 'joystick', 'payload': [0, 0]})
-            last_big_move_t = t
-            continue
-
-        if onset_i >= strong_threshold and long_move_allowed and gap > 0.42 and bar_pos in (2, 6):
+            last_button_t = t
+        elif bar_peak_arr[bar_i] >= accent_hi and section_labels[bar_i] != 'low' and (t - last_button_t) > 2.5:
             events.append({'t': round(t, 3), 'kind': 'button', 'payload': 'B'})
-            events.append({'t': round(t + min(0.9, gap * 0.65), 3), 'kind': 'joystick', 'payload': [0, 0]})
-            last_big_move_t = t
-            continue
+            last_button_t = t
 
-        swing = 55 if section == 'high' else 38 if section == 'mid' else 25
-        forward = 65 if section == 'high' else 42 if section == 'mid' else 20
+        next_transition = float(bar_transition_arr[bar_i + 1]) if (bar_i + 1) < len(bar_transition_arr) else 0.0
+        if bar_i % 4 == 3 and next_transition >= transition_hi:
+            fill_idx = min(start_idx + 3, len(beat_times) - 2)
+            fill_t = float(beat_times[fill_idx])
+            if (fill_t - last_button_t) > 2.0:
+                events.append({'t': round(fill_t, 3), 'kind': 'button', 'payload': 'X'})
+                last_button_t = fill_t
 
-        if section == 'high':
-            x = swing if (i % 2 == 0) else -swing
-            yv = 18 if (i % 4 in (0, 1)) else -10
-            events.append({'t': round(t, 3), 'kind': 'joystick', 'payload': [x, yv]})
-            events.append({'t': round(t + gap * 0.55, 3), 'kind': 'joystick', 'payload': [int(-x // 2), 0]})
-            events.append({'t': round(t + gap * 0.90, 3), 'kind': 'joystick', 'payload': [0, 0]})
-        elif section == 'mid':
-            x = 28 if (i % 4 in (0, 3)) else -28
-            yv = forward if (i % 2 == 0) else forward // 2
-            events.append({'t': round(t, 3), 'kind': 'joystick', 'payload': [x, yv]})
-            events.append({'t': round(t + gap * 0.65, 3), 'kind': 'joystick', 'payload': [0, 0]})
-        else:
-            x = 20 if (i % 2 == 0) else -20
-            events.append({'t': round(t, 3), 'kind': 'joystick', 'payload': [x, 8]})
-            events.append({'t': round(t + gap * 0.70, 3), 'kind': 'joystick', 'payload': [0, 0]})
-
-        if bar_pos == 7 and section != 'low' and long_move_allowed and rng.random() < 0.35:
-            label = 'Z' if section == 'mid' else 'X'
-            stamp = t + gap * 0.25
-            events.append({'t': round(stamp, 3), 'kind': 'button', 'payload': label})
-            last_big_move_t = stamp
+        _emit_bar_pattern(events, beat_times, start_idx, section_labels[bar_i], beat_accent, beat_centroid, phrase_i)
 
     events.append({'t': round(duration + 0.10, 3), 'kind': 'joystick', 'payload': [0, 0]})
     events.append({'t': round(duration + 0.20, 3), 'kind': 'button', 'payload': 'Stop'})
-
     events.sort(key=lambda e: float(e['t']))
-    compact: list[dict] = []
-    last_joy = None
-    last_joy_t = -999.0
-    for event in events:
-        if event['kind'] == 'joystick':
-            payload = tuple(int(v) for v in event['payload'])
-            if payload == last_joy and (float(event['t']) - last_joy_t) < 0.15:
-                continue
-            last_joy = payload
-            last_joy_t = float(event['t'])
-            event = {**event, 'payload': list(payload)}
-        compact.append(event)
+    compact = _compact_events(events)
+
+    app.logger.info(
+        'Generated %s dance events for %s (tempo=%.2f, bars=%s, bar_offset=%s)',
+        len(compact),
+        audio_path,
+        tempo,
+        len(bar_starts),
+        bar_offset,
+    )
 
     return compact, tempo, duration
 
