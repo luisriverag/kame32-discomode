@@ -8,7 +8,15 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from app import app, build_events
+from app import (
+    app,
+    _normalize_robot_base_url,
+    _resolve_log_level,
+    _validate_robot_events,
+    _validate_send_speed,
+    _with_safe_bookends,
+    build_events,
+)
 
 
 class AudioAnalysisTests(unittest.TestCase):
@@ -198,6 +206,47 @@ class AudioAnalysisTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload['code'], 'robot_dispatch_failed')
         self.assertIn('RuntimeError', payload['details'])
+
+    def test_validate_send_speed_defaults_and_bounds(self):
+        self.assertEqual(_validate_send_speed(None), 1.0)
+        self.assertEqual(_validate_send_speed(0.25), 0.25)
+        self.assertEqual(_validate_send_speed(1.0), 1.0)
+        with self.assertRaises(ValueError):
+            _validate_send_speed(0.2)
+        with self.assertRaises(ValueError):
+            _validate_send_speed(1.1)
+
+    def test_normalize_robot_base_url(self):
+        self.assertEqual(_normalize_robot_base_url('192.168.4.1/'), 'http://192.168.4.1')
+        self.assertEqual(_normalize_robot_base_url('https://robot.local/'), 'https://robot.local')
+        self.assertEqual(_normalize_robot_base_url(None), 'http://192.168.4.1')
+
+    def test_with_safe_bookends_inserts_start_neutral_and_stop(self):
+        events = [{'t': 0.3, 'kind': 'joystick', 'payload': [30, 0]}]
+        out = _with_safe_bookends(events)
+        self.assertEqual(out[0]['payload'], 'Start')
+        self.assertTrue(any(e['kind'] == 'joystick' and e['payload'] == [0, 0] for e in out))
+        self.assertEqual(out[-1]['payload'], 'Stop')
+
+    def test_validate_robot_events_requires_sorted_timestamps(self):
+        with self.assertRaises(ValueError):
+            _validate_robot_events([
+                {'t': 0.5, 'kind': 'button', 'payload': 'Start'},
+                {'t': 0.4, 'kind': 'button', 'payload': 'Stop'},
+            ])
+
+    def test_validate_robot_events_rejects_unsupported_button(self):
+        with self.assertRaises(ValueError):
+            _validate_robot_events([
+                {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
+                {'t': 0.2, 'kind': 'button', 'payload': 'INVALID'},
+            ])
+
+    def test_resolve_log_level(self):
+        self.assertEqual(_resolve_log_level(None), 20)  # INFO
+        self.assertEqual(_resolve_log_level('debug'), 10)
+        self.assertEqual(_resolve_log_level('15'), 15)
+        self.assertEqual(_resolve_log_level('bogus-level'), 20)
 
 
 if __name__ == '__main__':

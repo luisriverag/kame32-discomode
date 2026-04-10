@@ -21,7 +21,20 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
-app.logger.setLevel(logging.INFO)
+
+
+def _resolve_log_level(raw_level: str | None) -> int:
+    candidate = str(raw_level or '').strip().upper()
+    if not candidate:
+        return logging.INFO
+    if candidate.isdigit():
+        value = int(candidate)
+        return value if value >= 0 else logging.INFO
+    return getattr(logging, candidate, logging.INFO)
+
+
+_configured_log_level = _resolve_log_level(os.getenv('KAME32_LOG_LEVEL'))
+app.logger.setLevel(_configured_log_level)
 
 ALLOWED_AUDIO_SUFFIXES = {'.mp3', '.wav', '.ogg', '.m4a', '.flac'}
 ALLOWED_BUTTON_LABELS = {'A', 'B', 'C', 'X', 'Y', 'Z', 'Start', 'Stop'}
@@ -219,6 +232,8 @@ def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, flo
     decoder_notes = decoder_stderr.getvalue().strip()
     if decoder_notes:
         app.logger.info('Audio decoder notes while loading %s: %s', audio_path, decoder_notes)
+    else:
+        app.logger.debug('Audio decoder produced no warnings for %s', audio_path)
     duration = float(librosa.get_duration(y=y, sr=sr))
 
     hop_length = 512
@@ -494,10 +509,12 @@ def _send_event_timeline_to_robot(events: list[dict], base_url: str, send_speed:
 
         if event['kind'] == 'joystick':
             x, y = event['payload']
+            app.logger.debug('Dispatch joystick event t=%.3f x=%s y=%s to %s', float(event['t']), int(x), int(y), base_url)
             status = _http_robot_get(base_url, '/joystick', {'x': int(x), 'y': int(y)})
             dispatches.append({'t': event['t'], 'kind': 'joystick', 'payload': [int(x), int(y)], 'status': status})
         else:
             label = str(event['payload'])
+            app.logger.debug('Dispatch button event t=%.3f label=%s to %s', float(event['t']), label, base_url)
             status = _http_robot_get(base_url, '/button', {'label': label})
             dispatches.append({'t': event['t'], 'kind': 'button', 'payload': label, 'status': status})
 
@@ -520,6 +537,7 @@ def analyze_audio():
         return _error_response('No file selected.', 400, code='missing_filename')
 
     filename = secure_filename(upload.filename)
+    app.logger.info('Analyze request received for file: %s', filename)
     suffix = Path(filename).suffix or '.mp3'
     if suffix.lower() not in ALLOWED_AUDIO_SUFFIXES:
         return _error_response('Unsupported audio format. Allowed: mp3, wav, ogg, m4a, flac.', 400, code='unsupported_audio_format')
@@ -532,6 +550,7 @@ def analyze_audio():
             temp_path = temp_file.name
 
         events, tempo, duration = build_events(temp_path)
+        app.logger.info('Analyze complete for %s: tempo=%.2f duration=%.3f event_count=%s', filename, tempo, duration, len(events))
         return jsonify({
             'filename': filename,
             'tempo': round(float(tempo), 2),
@@ -552,6 +571,7 @@ def send_to_robot():
     payload = request.get_json(silent=True) or {}
     base_url = _normalize_robot_base_url(payload.get('base_url'))
     dry_run = bool(payload.get('dry_run', False))
+    app.logger.info('Send-to-robot request: base_url=%s dry_run=%s', base_url, dry_run)
     try:
         events = _validate_robot_events(_with_safe_bookends(payload.get('events')))
         send_speed = _validate_send_speed(payload.get('send_speed'))
@@ -559,6 +579,7 @@ def send_to_robot():
         return _error_response(f'Invalid robot send request: {err}', 400, code='invalid_robot_send_request')
 
     if dry_run:
+        app.logger.debug('Dry-run validated %s events at speed %.2f', len(events), send_speed)
         return jsonify({
             'ok': True,
             'mode': 'dry_run',

@@ -474,6 +474,11 @@ const degToRad = (deg) => (deg * Math.PI) / 180;
 async function init3D() {
   const moduleSources = [
     {
+      name: 'local-static',
+      three: '/static/vendor/three/build/three.module.js',
+      controls: '/static/vendor/three/examples/jsm/controls/OrbitControls.js',
+    },
+    {
       name: 'jsdelivr',
       three: 'https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js',
       controls: 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/controls/OrbitControls.js',
@@ -605,7 +610,7 @@ async function init3D() {
   } catch (err) {
     console.warn('3D module unavailable; running without 3D scene.', err);
     init2DFallback();
-    setStatus('3D module failed to load (CDN blocked). Timeline/audio/send controls remain available.');
+    setStatus('3D module failed to load (local/CDN unavailable). 2D preview remains available.');
   }
 }
 
