@@ -2,437 +2,143 @@
 
 ## Purpose
 
-This document captures the current known specification for the Kame32 dance-preview work completed so far in this conversation. It combines:
-- confirmed behavior from the current stock Kame32 gamepad firmware,
-- the current Flask 3D preview app implementation,
-- the MP3-to-dance analysis pipeline,
-- playback-speed additions,
-- send-to-robot speed controls,
-- and 3D loading fallback behavior.
-
-It is intentionally detailed so the project can be continued without re-discovering the same design decisions.
-
-## Project scope
+This specification reflects the **current implementation in this repository** and adds a detailed code review summary so future contributors can continue without rediscovering behavior or risks.
 
-The current project is **not** a full robot digital twin and **not** a full inverse-kinematics choreographer.
-
-The current goal is to provide a practical workflow:
+---
 
-1. preview likely Kame32 motion in the browser,
-2. import or auto-generate event timelines,
-3. audition those timelines with uploaded music,
-4. slow the preview to 50% or 25% speed when needed,
-5. send timelines to the robot at normal or reduced dispatch speed,
-6. and keep the data structures close to the stock Wi-Fi firmware currently running on the robot.
-
-## Confirmed Kame32 stock control model
-
-### Current user setup
-- The user's deployed robot is currently managed through the stock-style web interface at `192.168.4.1`.
-- The current working assumption is that the robot is reachable over HTTP at that address.
-
-### Stock HTTP API shape
-The currently known stock firmware exposes:
-
-- `GET /`
-- `GET /joystick?x=...&y=...`
-- `GET /button?label=...`
-
-### Known joystick semantics
-- `x` is turn / angular intent.
-- `y` is forward-back / linear intent.
-- The firmware stores the most recent joystick values and keeps producing gait motion until another joystick value is sent.
-- Sending `x=0` and `y=0` is the practical stop command for movement.
-- When there is no active joystick input, the firmware returns the robot to `home()`.
-
-### Known button labels
-The stock button handler currently recognizes:
-
-- `A` → `hello()`
-- `B` → `jump()`
-- `C` → `pushUp(4, 1000)`
-- `X` → `dance(2, 1000)`
-- `Y` → `moonwalkL(2, 2000)`
-- `Z` → `frontBack(2, 1000)`
-- `Start` → `arm()`
-- `Stop` → `disarm()`
-
-### Known stock gait parameters
-The current preview app mirrors these values from the stock gamepad firmware:
-
-- `period = 450`
-- `leg_spread = 20`
-- `body_height = 10`
-- `step_height = 20`
-
-### Known stock phase arrays
-Linear-dominant movement uses:
-
-- `phase_linear = [90, 90, 270, 90, 270, 270, 90, 270]`
-
-Angular-dominant movement uses:
-
-- `phase_angular = [90, 270, 270, 90, 270, 90, 90, 270]`
-
-### Known oscillator grouping
-The stock gait logic treats:
-- servos `0, 1, 4, 5` as the step-amplitude group,
-- servos `2, 3, 6, 7` as the step-height group.
-
-The preview app maps these to hips vs knees for visualization.
-
-## Preview app architecture
-
-### Backend
-Current backend: Flask.
-
-Current routes:
-- `/` → serves the app UI
-- `/api/presets` → returns demo event and keyframe presets
-- `/api/analyze-audio` → accepts uploaded audio and returns a generated event timeline
-- `/api/send-to-robot` → validates and dispatches event timelines to robot HTTP endpoints
-
-### Frontend
-Current frontend: one HTML page plus one browser-side JS module using Three.js.
-
-Main frontend responsibilities:
-- render a 3D quadruped preview,
-- maintain a playback transport,
-- provide multiple preview modes,
-- import JSON timelines,
-- upload audio for analysis,
-- keep browser audio and preview motion synchronized,
-- expose playback-speed presets,
-- expose robot send-speed selection,
-- and remain usable when primary Three.js CDN loading fails.
-
-Current viewer layout detail:
-- a full-width **Kame32 Disco Mode school** strip sits above the three-column layout and communicates the intended flow: load MP3 → visualize → send to robot.
-- transport/progress meter and servo chips are shown at the **top** of the viewer pane.
-- status box is offset below the meter to avoid overlap.
-
-## Supported preview modes
-
-### 1. Live joystick mode
-Purpose:
-- preview stock-style gait behavior driven by `x` and `y`.
-
-Inputs:
-- joystick x
-- joystick y
-- period
-- step height
-- leg spread
-- body height
-
-Behavior:
-- if `abs(y) >= abs(x)`, the app uses the linear phase array and models forward/back walking behavior.
-- otherwise it uses the angular phase array and models turning behavior.
-- the preview synthesizes servo angles over time using sinusoidal motion.
-
-### 2. Button routine mode
-Purpose:
-- preview the style and timing of stock button-triggered routines.
-
-Important limitation:
-- these are **visual approximations**, not exact reconstructions of the internal Kame library routines.
-
-Approximate durations used in the preview:
-- `A`: `1.2s`
-- `B`: `0.8s`
-- `X`: `1.4s`
-- `Y`: `2.2s`
-- `Z`: `1.2s`
-- `Start`: `0.2s`
-- `Stop`: `0.2s`
-
-### 3. Manual servo pose mode
-Purpose:
-- preview a direct 8-servo pose.
-
-Behavior:
-- user adjusts sliders for `s0` through `s7`,
-- pose is immediately applied to the 3D model.
-
-### 4. Event timeline JSON mode
-Purpose:
-- preview event streams shaped like the Wi-Fi control script.
-
-Supported event styles:
-- joystick events: `{"t": 1.2, "kind": "joystick", "payload": [x, y]}`
-- button events: `{"t": 2.0, "kind": "button", "payload": "X"}`
-- pose events: `{"t": 3.5, "kind": "pose", "pose": {...}}`
-
-Behavior:
-- joystick events update internal joystick state,
-- button events activate approximate routine previews,
-- pose events can be treated like pose keyframes.
-
-### 5. Keyframe JSON mode
-Purpose:
-- preview exact user-authored servo poses over time.
-
-Format:
-- `[{ "t": 0.0, "pose": {...} }, ...]`
-
-Behavior:
-- frames are sorted by time,
-- interpolation is linear per-servo,
-- missing servos are filled from the app's `homePose`.
-
-## Servo mapping used by the preview
-
-The current preview uses this practical mapping:
-
-- `s0` front-left hip
-- `s1` front-right hip
-- `s2` front-left knee
-- `s3` front-right knee
-- `s4` rear-right hip
-- `s5` rear-left hip
-- `s6` rear-left knee
-- `s7` rear-right knee
-
-This mapping is suitable for preview and can be adjusted later if the physical build differs.
-
-## 3D viewer model
-
-The current 3D model is a stylized preview mesh, not a CAD-accurate Kame32 replica.
-
-### Current scene elements
-- body box
-- top shell box
-- four legs
-- each leg has:
-  - leg root
-  - hip pivot
-  - upper segment
-  - knee pivot
-  - lower segment
-  - foot sphere
-- ground disc
-- grid helper
-- hemisphere light
-- directional light
-- orbit camera controls
-
-### Current leg anchor layout
-- front-left mount: `(1.6, 0.0, 1.0)`
-- front-right mount: `(1.6, 0.0, -1.0)`
-- rear-left mount: `(-1.6, 0.0, 1.0)`
-- rear-right mount: `(-1.6, 0.0, -1.0)`
-
-### Current segment lengths
-- upper leg length: `1.3`
-- lower leg length: `1.3`
-
-### Current home pose
-- `s0 = 110`
-- `s1 = 70`
-- `s2 = 80`
-- `s3 = 100`
-- `s4 = 70`
-- `s5 = 110`
-- `s6 = 100`
-- `s7 = 80`
-
-## MP3 / audio analysis pipeline
-
-### Upload flow
-1. user selects an audio file in the browser,
-2. browser uploads it as form field `audio` to `/api/analyze-audio`,
-3. backend stores it temporarily,
-4. backend analyzes it with `librosa`,
-5. backend returns:
-   - original filename,
-   - estimated tempo,
-   - duration,
-   - generated events,
-   - event count.
-
-### Current analysis parameters
-- audio is loaded mono,
-- sample rate is resampled to `22050 Hz`,
-- beat tracking is based on onset strength,
-- RMS energy is also computed.
-
-### Current extracted features
-- onset strength envelope
-- beat frames / beat times
-- RMS energy
-- z-score normalized RMS
-- z-score normalized onset
-
-### Current section classifier
-For each beat:
-- `score = 0.65 * rms + 0.35 * onset`
-
-Classification:
-- `score > 1.1` → `high`
-- `score > 0.2` → `mid`
-- else → `low`
-
-### Current event-generation rules
-The backend currently builds a Kame32-style event stream as follows:
-
-#### Common initialization
-Always prepend:
-- `Start` button at `t = 0.00`
-- neutral joystick `[0, 0]` at `t = 0.15`
-
-#### Strong-bar rule
-If:
-- beat is at bar position `0`,
-- combined RMS + onset is above the 90th percentile,
-- and a large move has not happened very recently,
-
-then:
-- use `Y` if section is `high`,
-- otherwise use `X`,
-- then schedule a joystick stop shortly after.
-
-#### Accent jump rule
-If:
-- onset is above the 80th percentile,
-- gap is long enough,
-- bar position is `2` or `6`,
-- and a large move has not happened very recently,
-
-then:
-- schedule `B`,
-- then schedule a joystick stop.
-
-#### High section motion
-Use larger joystick swings and a counter-sway stop:
-- x alternates left/right,
-- y nudges slightly forward/back,
-- additional stop points are inserted.
-
-#### Mid section motion
-Use medium joystick swings and moderate forward push.
-
-#### Low section motion
-Use smaller sways and gentler movement.
-
-#### Occasional phrase ending accent
-At bar position `7`, on non-low sections, with a random chance:
-- use `Z` for `mid`,
-- use `X` for `high`.
-
-#### Common finalization
-Always append:
-- joystick `[0, 0]` at `duration + 0.10`
-- `Stop` button at `duration + 0.20`
-
-#### Event compaction
-Near-duplicate joystick entries are removed if the same payload repeats within `0.15s`.
-
-## Audio playback in the browser
-
-### Current audio preview behavior
-- uploaded audio is loaded into a browser `<audio>` element using an object URL,
-- the browser audio player is shown after a file is selected,
-- once analysis succeeds, the event timeline is auto-loaded,
-- the app switches into Event timeline mode,
-- the browser audio clock becomes the transport source.
-
-### Why audio-sync mode matters
-In audio-sync mode:
-- `state.time` comes from `audio.currentTime`,
-- movement timing follows the media clock,
-- seeking the transport seeks the audio,
-- pausing the audio pauses the motion preview.
-
-This is better than trying to run separate clocks for motion and sound.
-
-## Playback-speed requirements implemented
-
-### Requested behavior
-The user requested:
-- music playback at 50% speed,
-- music playback at 25% speed,
-- and matching movement playback at the same slowed rate.
-
-### Implemented behavior
-The app now supports:
-- `100%` speed preset
-- `50%` speed preset
-- `25%` speed preset
-- plus a numeric custom speed field from `0.25` to `3.0`
-
-### Audio-sync implementation
-When audio is active:
-- the app sets the audio element's `playbackRate`,
-- the preview transport follows `audio.currentTime`,
-- therefore the visible movement slows down exactly with the music.
-
-### Non-audio implementation
-When audio is not active:
-- the preview increments the internal transport by:
-  - `delta_seconds * playback_speed`
-
-This gives comparable slow-motion review for:
-- joystick mode
-- button mode
-- pose mode
-- event mode without audio
-- keyframe mode
-
-## Send-to-robot requirements implemented
-
-### Endpoint and transport
-- Backend route: `POST /api/send-to-robot`.
-- Robot target base URL defaults to `http://192.168.4.1` and is normalized to include scheme.
-- Dispatch protocol uses:
-  - `GET /joystick?x=...&y=...`
-  - `GET /button?label=...`
-
-### Validation and limits
-- `events` must be a non-empty ordered array.
-- Max events: `5000`.
-- Max last event timestamp: `600s`.
-- Event kinds: `joystick` (`[x,y]`) and `button` (allowed labels only).
-- `send_speed` is optional and must be within `0.25` to `1.0`.
-
-### Send-speed semantics
-- `send_speed=1.0`: normal timeline dispatch speed.
-- `send_speed<1.0`: reduced speed by stretching event schedule (`target_time / send_speed`).
-- Example: `send_speed=0.5` doubles real-world dispatch duration.
-
-### Dry-run mode
-- `dry_run=true` validates payload and returns summary metadata without sending HTTP calls to the robot.
-
-### UI behavior
-The app now exposes:
-- a numeric playback speed field,
-- dedicated preset buttons for `100%`, `50%`, and `25%`,
-- active-button highlighting for the currently selected preset.
-
-## JSON data contracts
-
-### Event timeline contract
-The app currently accepts arrays of objects containing:
-- `t` number, seconds
-- `kind` string
-- `payload` depending on kind
-
-Examples:
+## 1) Product scope
+
+The app is a Flask-based workflow tool for Kame32 dance experimentation:
+
+1. Load audio and auto-generate a dance event timeline.
+2. Preview movement in-browser (3D when possible, fallback 2D otherwise).
+3. Edit/import timelines or keyframes.
+4. Optionally send validated timelines to a robot over the known stock HTTP API.
+
+It is **not** intended to be:
+
+- a CAD-accurate digital twin,
+- a full inverse-kinematics choreographer,
+- or a firmware replacement.
+
+---
+
+## 2) Backend contract (`app.py`)
+
+### Routes
+
+- `GET /` → renders UI.
+- `GET /api/presets` → returns demo routines.
+- `POST /api/analyze-audio` → accepts uploaded audio and returns generated event timeline.
+- `POST /api/send-to-robot` → validates timeline and either dry-runs or dispatches to robot endpoints.
+
+### Upload limits and validation
+
+- Max request body: `50 MB`.
+- Allowed upload extensions: `.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`.
+- Invalid or missing upload payloads return structured JSON errors with machine-friendly `code` values.
+- Logging verbosity is configurable via `KAME32_LOG_LEVEL` (default `INFO`).
+
+### Audio analysis pipeline
+
+`build_events(audio_path)` currently does the following:
+
+1. Loads mono audio at `22050 Hz` via `librosa.load`.
+2. Splits harmonic/percussive components (`librosa.effects.hpss`).
+3. Computes onset envelope, beat track, RMS, centroid, STFT-derived bass energy.
+4. Falls back to synthetic beat grid when beat detection is sparse (<8 beats).
+5. Samples features at beat times, z-score normalizes/clips feature tracks.
+6. Infers bar offset from accent+bass profile.
+7. Classifies bars (`low`/`mid`/`high`) using percentile thresholds.
+8. Emits button and joystick events with phrase-aware heuristics.
+9. Appends terminal neutral joystick + Stop events.
+10. Compacts near-duplicate joystick events.
+
+Response payload includes:
+
+- `filename`, `tempo`, `duration`, `events`, `event_count`.
+
+### Send-to-robot pipeline
+
+- Base URL is normalized and defaults to `http://192.168.4.1`.
+- Event payload is validated:
+  - non-empty list,
+  - sorted ascending by `t`,
+  - max event count `5000`,
+  - max timeline `600s`,
+  - kinds limited to `button` and `joystick`,
+  - button labels limited to `A/B/C/X/Y/Z/Start/Stop`.
+- Safety bookends are automatically inserted when absent:
+  - Start button,
+  - early neutral joystick,
+  - Stop button.
+- `dry_run=true` returns metadata only.
+- Live send uses a single-thread executor and timing-aligned dispatch.
+- `send_speed` in `[0.25, 1.0]` stretches dispatch schedule.
+
+### Error model
+
+Structured errors are consistently returned with:
+
+- human-readable `error`,
+- optional `code`,
+- optional `details`.
+
+Robot network failures return `502 robot_unreachable`; unexpected dispatch failures return `500 robot_dispatch_failed`.
+
+---
+
+## 3) Frontend behavior (`templates/index.html`, `static/app.js`)
+
+### UI structure
+
+- Three-column layout: controls / viewer / robot-send panel.
+- Workflow strip (“Analyze → Visualize → Send”) communicates expected sequence.
+- Transport meter + time display + servo readout provide live feedback.
+
+### Supported preview modes
+
+1. **Joystick mode**: stock-like gait approximation from x/y + gait params.
+2. **Button mode**: approximate routine-style movement for stock labels.
+3. **Pose mode**: direct manual control of 8 servo angles.
+4. **Events mode**: executes event timeline over transport clock.
+5. **Keyframes mode**: linear interpolation between authored poses.
+
+### Audio sync and transport
+
+- When audio sync is active, transport follows `<audio>.currentTime`.
+- Playback speed presets and numeric speed update both motion and (where active) audio playback rate.
+- Seeking transport seeks audio in synchronized mode.
+
+### Resilience
+
+The client attempts dynamic ESM imports in this order for Three.js + OrbitControls:
+1. local static modules under `/static/vendor/three/...`
+2. `cdn.jsdelivr.net`
+3. `unpkg.com`
+
+A helper script (`scripts/install_three_local.sh`) can vendor local modules so restricted networks do not require browser policy changes.
+
+If all sources fail, the app degrades gracefully:
+- if the main app module still loads, a built-in 2D preview path is used and timeline/audio/send workflows continue,
+- if the main module fails to load entirely, an inline HTML fallback keeps audio analysis available but disables timeline preview and robot send controls.
+
+---
+
+## 4) Data contracts
+
+### Event timeline
+
 ```json
 [
   {"t": 0.0, "kind": "button", "payload": "Start"},
   {"t": 0.2, "kind": "joystick", "payload": [0, 70]},
-  {"t": 1.4, "kind": "button", "payload": "X"},
-  {"t": 3.0, "kind": "joystick", "payload": [0, 0]}
+  {"t": 1.4, "kind": "button", "payload": "X"}
 ]
 ```
 
-### Pose event contract
-Accepted inside event timelines:
-```json
-{"t": 2.5, "kind": "pose", "pose": {"s0": 90, "s1": 90, "s2": 80, "s3": 100, "s4": 90, "s5": 90, "s6": 100, "s7": 80}}
-```
+### Keyframe timeline
 
-### Keyframe contract
 ```json
 [
   {"t": 0.0, "pose": {"s0": 90, "s1": 90, "s2": 80, "s3": 100, "s4": 90, "s5": 90, "s6": 100, "s7": 80}},
@@ -440,53 +146,45 @@ Accepted inside event timelines:
 ]
 ```
 
-## Known limitations
+---
 
-1. The 3D viewer is a stylized approximation, not exact robot geometry.
-2. Button routines are approximated by hand-authored preview motions, not decoded from firmware internals.
-3. The MP3 analysis produces **event timelines**, not true physically optimized choreography.
-4. There is no raw `/pose` or `/servo` Wi-Fi endpoint in the known stock firmware.
-5. The frontend depends on external CDNs for 3D modules (with fallback attempts), so fully offline 3D needs vendored assets.
-6. The preview assumes a practical hip/knee mapping that may need adjustment for some physical builds.
+## 5) Detailed code review summary
 
-## Existing artifacts created so far
+### Strengths
 
-### Standalone Wi-Fi dance script
-A separate Python script was previously created to:
-- analyze an MP3,
-- generate a dance event stream,
-- and send `/joystick` and `/button` requests directly to the robot.
+- **Good guardrails on untrusted inputs** (upload-size cap, extension filtering, strict event validation).
+- **Consistent API error shape**, helpful for UI error handling.
+- **Practical safety defaults** before robot dispatch (auto Start/neutral/Stop).
+- **Robust music analysis fallback** when beat tracking is sparse.
+- **Tests cover critical backend paths**: upload success, fallback behavior, validation failures, dry-run semantics, and dispatch error handling.
 
-That script is useful for live robot playback.
+### Risks / technical debt
 
-### Flask preview app
-The Flask preview app is useful for:
-- visual debugging,
-- trying JSON timelines,
-- and auditioning music-synced motion before sending anything to hardware.
+1. **Single-file backend concentration**: analysis, validation, HTTP dispatch, and routes all live in `app.py`; maintainability would improve by splitting modules.
+2. **In-memory sync assumptions**: dispatch execution and app state are process-local (fine for current usage, but multi-worker deployments would need care).
+3. **Frontend monolith**: `static/app.js` is large and multi-responsibility (rendering, state, transport, API calls), which increases regression risk.
+4. **Algorithm opacity**: audio heuristic thresholds are data-driven percentile mixes but not externally configurable.
+5. **No persistent project storage**: timeline/keyframe/audio metadata are session-local unless manually exported.
 
-## Recommended next steps
+### Recommended next engineering steps
 
-1. Add a "Send to Kame32" backend proxy so the same app can preview and then drive `http://192.168.4.1`.
-2. Add export formats:
-   - event timeline JSON
-   - keyframe JSON
-   - standalone Python control script
-3. Add richer button-routine approximation or replace those with captured keyframes from the real robot.
-4. Add direct servo-pose routes if the firmware is extended with `/pose` or `/routine`.
-5. Add beat markers and event markers in the transport UI.
-6. Add save/load projects containing:
-   - audio metadata
-   - event timeline
-   - keyframes
-   - chosen speed
-   - mode
-7. Replace the stylized mesh with a Kame32-shaped CAD-derived model.
+1. Factor backend into modules: `audio_analysis.py`, `robot_dispatch.py`, `api_routes.py`.
+2. Add unit tests for individual helpers (`_compact_events`, `_infer_bar_offset`, `_with_safe_bookends`).
+3. Add typed schema validation (e.g., Pydantic or Marshmallow) for request/response models.
+4. Split frontend into smaller ES modules (transport, renderer, UI controls, API client).
+5. Add optional persisted project format (JSON bundle with events/keyframes/settings).
 
-## Source basis for this specification
+---
 
-This spec is based on:
-- the current conversation and user constraints,
-- the stock Kame32 `gamepad.cpp` behavior previously inspected,
-- the generated standalone MP3 dance script,
-- and the current Flask preview app codebase in this workspace.
+## 6) Test status baseline
+
+Current test suite (`tests/test_audio_analysis.py`) validates:
+
+- successful audio uploads for bundled sample MP3s,
+- fallback beat behavior on silence,
+- upload validation failures,
+- send-to-robot dry-run + base URL normalization,
+- send speed validation,
+- network and unexpected dispatch error responses.
+
+This gives a strong baseline for backend behavior but leaves major frontend flows untested.

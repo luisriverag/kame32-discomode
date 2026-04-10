@@ -1,24 +1,27 @@
+# Kame32 DanceMode (Flask Preview + Audio-to-Events)
 
-# Kame32 3D Preview
+A Flask web app for building and previewing Kame32 dance timelines, then optionally streaming them to a robot over the stock Wi-Fi HTTP API.
 
-A small Flask web app that previews Kame32 movements in 3D.
+![Kame32 DanceMode UI](SCREENSHOT.png)
 
-## Features
+## What this app does
 
-- Live joystick gait preview based on the current stock Kame32 gamepad firmware parameters
-- Button-routine previews for A / B / X / Y / Z
-- Manual 8-servo pose editing
-- Event timeline JSON import
-- Keyframe JSON import with interpolation
-- MP3/audio upload that analyzes beats and auto-builds a dance event timeline for preview
-- "Kame32 Disco Mode school" 3-step workflow strip pinned above the three-column editor/view/send layout
-- Optional browser audio playback synced to the preview timeline
-- Quick playback presets for 100%, 50%, and 25% speed, with music and move timing slowed together in audio-sync mode
-- Direct event streaming to Kame over Wi-Fi (`http://192.168.4.1`) after preview
-- Adjustable robot send speed (100% / 75% / 50% / 25%) for slower live dispatch when needed
-- Resilient 3D loader that tries multiple CDNs (jsDelivr then unpkg) before falling back to built-in 2D preview
+- 3D (or fallback 2D) movement preview in the browser (local static Three.js preferred; CDN fallback)
+- Multiple preview modes:
+  - live joystick gait
+  - button routine approximations
+  - manual 8-servo pose
+  - event timeline JSON
+  - keyframe JSON
+- Audio upload (`.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`) and automatic dance-event generation using `librosa`
+- Browser audio synchronization so motion follows the media clock
+- Playback speed controls (`100%`, `50%`, `25%`, plus numeric custom speed)
+- Send timeline directly to robot via:
+  - `GET /joystick?x=...&y=...`
+  - `GET /button?label=...`
+- Dry-run send validation and send-speed throttling (`0.25` to `1.0`)
 
-## Run
+## Quick start
 
 ```bash
 python -m venv .venv
@@ -27,31 +30,51 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Then open http://127.0.0.1:5000
+Open: <http://127.0.0.1:5000>
 
-## MP3 workflow
+### Log verbosity
 
-At the very top of the page (above all three columns), the **Kame32 Disco Mode school** strip highlights the intended order:
-1. **Load MP3**
-2. **Visualize**
-3. **Send to robot**
+Use `KAME32_LOG_LEVEL` to control Flask app logging without code changes:
 
-1. Open the app in your browser.
-2. In **Load MP3 and auto-build dance**, pick an MP3.
-3. Click **Analyze audio into dance**.
-4. The server extracts beats with `librosa`, generates a Kame32-style event timeline, and switches the viewer to **Event timeline JSON** mode.
-5. Press **Play** to preview it in 3D with the browser audio element as the timeline clock.
-6. Use the **100% / 50% / 25%** speed buttons to audition the same choreography in slow motion; in audio-sync mode both the music and movement timeline slow down together.
-7. In **Event timeline JSON**, choose **Robot send speed** (100/75/50/25%).
-8. Click **Send timeline to robot** to stream events directly to your Kame firmware over HTTP.
+```bash
+KAME32_LOG_LEVEL=DEBUG python app.py
+```
 
-## Send-to-robot API
+Accepted values include standard logging names (`DEBUG`, `INFO`, `WARNING`, etc.) or numeric levels.
 
-### Endpoint
+## Primary workflow
 
-`POST /api/send-to-robot`
+1. **Load MP3/audio** in the left panel.
+2. Click **Analyze audio into dance**.
+3. Inspect/edit generated **Event timeline JSON**.
+4. Preview with **Play** and optional slower playback.
+5. Optionally send to hardware with **Send timeline to robot**.
 
-### Request body
+## API summary
+
+### `POST /api/analyze-audio`
+
+`multipart/form-data` with field name `audio`.
+
+Success response includes:
+
+- `filename`
+- `tempo`
+- `duration`
+- `events`
+- `event_count`
+
+Common error codes:
+
+- `missing_audio`
+- `missing_filename`
+- `unsupported_audio_format`
+- `audio_analysis_failed`
+- `upload_too_large`
+
+### `POST /api/send-to-robot`
+
+Example request:
 
 ```json
 {
@@ -59,59 +82,60 @@ At the very top of the page (above all three columns), the **Kame32 Disco Mode s
   "events": [
     {"t": 0.0, "kind": "button", "payload": "Start"},
     {"t": 0.2, "kind": "joystick", "payload": [0, 70]},
-    {"t": 1.1, "kind": "joystick", "payload": [0, 0]},
-    {"t": 1.2, "kind": "button", "payload": "Stop"}
+    {"t": 1.2, "kind": "joystick", "payload": [0, 0]},
+    {"t": 1.3, "kind": "button", "payload": "Stop"}
   ],
   "send_speed": 0.5,
   "dry_run": false
 }
 ```
 
-### `send_speed` behavior
+Validation/limits:
 
-- Range: `0.25` to `1.0`.
-- `1.0` = normal timeline speed.
-- `0.5` = half speed (dispatch timing is stretched to 2× duration).
-- `0.25` = quarter speed (dispatch timing is stretched to 4× duration).
+- events required, non-empty, sorted by `t`
+- max events: `5000`
+- max timeline timestamp: `600s`
+- supported kinds: `button`, `joystick`
+- allowed button labels: `A B C X Y Z Start Stop`
+- `send_speed` range: `0.25..1.0`
 
-### Dry run
+Behavior:
 
-Set `"dry_run": true` to validate payload and timing metadata without dispatching any robot HTTP requests.
+- Missing Start/Stop/early-neutral joystick are auto-added as safety bookends.
+- `dry_run=true` validates and returns metadata without network dispatch.
+- Non-dry-run dispatch runs on a worker thread with timeout and clear network error reporting.
 
-## JSON formats
 
-### Event timeline
+## 3D without browser setting changes (install locally)
 
-```json
-[
-  {"t": 0.0, "kind": "button", "payload": "Start"},
-  {"t": 0.2, "kind": "joystick", "payload": [0, 70]},
-  {"t": 1.4, "kind": "button", "payload": "X"},
-  {"t": 3.0, "kind": "joystick", "payload": [0, 0]}
-]
+The app now tries **local static Three.js modules first**, then CDNs (`jsDelivr`, `unpkg`) as fallback.
+
+If your environment blocks CDNs, vendor modules locally once:
+
+```bash
+./scripts/install_three_local.sh
 ```
 
-### Keyframes
+This script installs `three@0.164.1` via npm in a temp directory and copies only:
+- `three.module.js`
+- `OrbitControls.js`
 
-```json
-[
-  {"t": 0.0, "pose": {"s0": 90, "s1": 90, "s2": 80, "s3": 100, "s4": 90, "s5": 90, "s6": 100, "s7": 80}},
-  {"t": 0.7, "pose": {"s0": 110, "s1": 70, "s2": 75, "s3": 105, "s4": 70, "s5": 110, "s6": 105, "s7": 75}}
-]
+into:
+- `static/vendor/three/build/three.module.js`
+- `static/vendor/three/examples/jsm/controls/OrbitControls.js`
+
+Then restart Flask and reload the page.
+
+If local files are missing and CDNs are blocked, the app degrades to 2D preview mode.
+
+## Tests
+
+```bash
+python -m unittest -v tests/test_audio_analysis.py
 ```
 
 ## Notes
 
-- The joystick gait uses the same period, leg spread, body height, step height, and phase arrays as the current Kame32 stock gamepad firmware.
-- The button routines are visual approximations for previewing style and timing.
-- The MP3/audio analysis produces a Kame32-style event timeline, not inverse-kinematics choreography.
-- The app tries multiple CDNs for Three.js module loading; if both fail, it automatically falls back to 2D preview so timeline/audio/send workflow can continue.
-- To send directly to hardware, your machine running Flask must be on the Kame AP network and able to reach `192.168.4.1`.
-
-
-## Playback speed behavior
-
-- The numeric **Playback speed** field still accepts custom values from `0.25` to `3.0`.
-- The preset buttons provide one-click **100%**, **50%**, and **25%** playback.
-- In audio-sync mode, the app sets the browser audio element's `playbackRate` and uses the audio clock as the transport, so the music and the move timeline stay aligned while slowed down.
-- In non-audio modes, the preview timeline itself advances at the selected speed.
+- This project is a practical preview/scripting tool, not an exact physical digital twin.
+- Button routine animations are approximations of style/timing.
+- Audio analysis generates event timelines (buttons + joystick moves), not IK-optimized choreography.
