@@ -1,3 +1,5 @@
-Flask>=3.0,<4
-librosa>=0.10,<1
-numpy>=1.26,<3
+Flask<4,>=3.0
+librosa<1,>=0.10
+numpy==2.2.6
+numba==0.61.2
+llvmlite==0.44.0
