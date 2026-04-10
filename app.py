@@ -6,7 +6,9 @@ import random
 import socket
 import tempfile
 import time
+from contextlib import redirect_stderr
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from io import StringIO
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -122,8 +124,12 @@ def _fallback_beat_grid(duration: float, tempo: float | None) -> np.ndarray:
 
 def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, float]:
     rng = random.Random(seed)
-
-    y, sr = librosa.load(audio_path, sr=22050, mono=True)
+    decoder_stderr = StringIO()
+    with redirect_stderr(decoder_stderr):
+        y, sr = librosa.load(audio_path, sr=22050, mono=True)
+    decoder_notes = decoder_stderr.getvalue().strip()
+    if decoder_notes:
+        app.logger.info('Audio decoder notes while loading %s: %s', audio_path, decoder_notes)
     duration = float(librosa.get_duration(y=y, sr=sr))
 
     onset_env = librosa.onset.onset_strength(y=y, sr=sr)
