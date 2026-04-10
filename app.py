@@ -249,6 +249,19 @@ def _http_robot_get(base_url: str, path: str, params: dict) -> int:
         raise URLError(f'timed out contacting {url}') from err
 
 
+def _format_robot_network_error(err: BaseException) -> str:
+    reason = getattr(err, 'reason', err)
+    if isinstance(reason, TimeoutError):
+        return 'timed out'
+    if isinstance(reason, socket.timeout):
+        return 'timed out'
+    if isinstance(reason, OSError):
+        if getattr(reason, 'errno', None) == 51:
+            return 'network is unreachable'
+        return reason.strerror or str(reason)
+    return str(reason)
+
+
 def _validate_send_speed(raw_value: object) -> float:
     if raw_value is None:
         return 1.0
@@ -439,19 +452,26 @@ def send_to_robot():
         result = future.result(timeout=ROBOT_MAX_SCRIPT_SECONDS + 15.0)
     except FutureTimeoutError as err:
         if future.done():
-            app.logger.exception('Robot dispatch network timeout for %s events to %s', len(events), base_url)
+            detail = _format_robot_network_error(err)
+            app.logger.warning('Robot dispatch network timeout to %s: %s', base_url, detail)
             return _error_response(
                 f'Could not reach robot at {base_url}. Check Wi-Fi and power.',
                 502,
                 code='robot_unreachable',
-                details=str(err),
+                details=detail,
             )
         future.cancel()
-        app.logger.exception('Robot dispatch timed out for %s events to %s', len(events), base_url)
+        app.logger.warning('Robot dispatch timed out for %s events to %s', len(events), base_url)
         return _error_response('Robot dispatch timed out.', 504, code='robot_dispatch_timeout', details=f'Timeline execution exceeded {ROBOT_MAX_SCRIPT_SECONDS + 15.0:.0f}s timeout.')
     except URLError as err:
-        app.logger.exception('Robot dispatch network error to %s', base_url)
-        return _error_response(f'Could not reach robot at {base_url}. Check Wi-Fi and power.', 502, code='robot_unreachable', details=str(getattr(err, 'reason', err)))
+        detail = _format_robot_network_error(err)
+        app.logger.warning('Robot dispatch network error to %s: %s', base_url, detail)
+        return _error_response(
+            f'Could not reach robot at {base_url}. Check Wi-Fi and power.',
+            502,
+            code='robot_unreachable',
+            details=detail,
+        )
     except Exception as err:
         app.logger.exception('Robot dispatch failed for %s events to %s', len(events), base_url)
         return _error_response('Robot dispatch failed unexpectedly.', 500, code='robot_dispatch_failed', details=f'{type(err).__name__}: {err}')
