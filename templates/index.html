@@ -40,14 +40,21 @@
       border-left: 1px solid var(--border);
     }
     .viewer {
-      position: relative;
       min-height: 100vh;
       background: radial-gradient(circle at top, #182333 0%, #0b0f14 58%);
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
     }
     #scene {
       width: 100%;
-      height: 100vh;
+      min-height: 62vh;
+      height: 100%;
       display: block;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(11, 15, 20, 0.55);
     }
     h1 { margin: 0 0 6px; font-size: 1.45rem; }
     h2 { margin: 18px 0 10px; font-size: 1rem; }
@@ -129,16 +136,12 @@
       margin-bottom: 6px;
     }
     .meter {
-      position: absolute;
-      left: 20px;
-      right: 20px;
-      top: 18px;
       background: rgba(8, 11, 16, 0.86);
       border: 1px solid var(--border);
       border-radius: 14px;
       padding: 14px;
       backdrop-filter: blur(8px);
-      z-index: 3;
+      flex: 0 0 auto;
     }
     .meter-grid {
       display: grid;
@@ -160,17 +163,30 @@
     .servo-value { font-size: 0.8rem; color: var(--muted); text-align: right; }
     .tiny { font-size: 0.8rem; color: var(--muted); }
     .status {
-      position: absolute;
-      top: 108px;
-      right: 18px;
       background: rgba(8, 11, 16, 0.86);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 10px 12px;
       font-size: 0.88rem;
       color: var(--muted);
-      max-width: 320px;
-      z-index: 4;
+      max-width: 100%;
+      flex: 0 0 auto;
+    }
+    .preview-frame {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: rgba(6, 10, 16, 0.4);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      flex: 1 1 auto;
+    }
+    .preview-title {
+      font-size: 0.9rem;
+      color: var(--muted);
+      margin: 0 0 8px;
+      letter-spacing: 0.01em;
     }
     .workflow {
       display: grid;
@@ -210,7 +226,8 @@
     }
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
-      .viewer, #scene { min-height: 70vh; height: 70vh; }
+      .viewer { min-height: 70vh; }
+      #scene { min-height: 52vh; }
       .sidebar, .robot-sidebar { border-right: 0; border-left: 0; border-bottom: 1px solid var(--border); }
       .workflow { grid-template-columns: 1fr; }
     }
@@ -337,8 +354,6 @@
     </aside>
 
     <main class="viewer">
-      <canvas id="scene"></canvas>
-      <div class="status" id="statusBox">Ready.</div>
       <div class="meter">
         <div class="card" style="margin-bottom: 12px;">
           <h2>Quick workflow</h2>
@@ -360,10 +375,15 @@
           </div>
         </div>
       </div>
+      <div class="status" id="statusBox">Ready.</div>
+      <div class="preview-frame">
+        <h2 class="preview-title">Preview</h2>
+        <canvas id="scene"></canvas>
+      </div>
     </main>
 
     <aside class="robot-sidebar">
-      <h1>Robot panel</h1>
+      <h1>Control panel</h1>
       <div class="card" id="eventsCard">
         <h2>Event timeline JSON</h2>
         <p class="tiny">Paste an array of events using the same shape as the MP3 script: <code>{"t": 1.2, "kind": "joystick", "payload": [0, 70]}</code>.</p>
