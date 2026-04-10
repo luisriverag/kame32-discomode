@@ -35,6 +35,7 @@ const analyzeAudioBtn = document.getElementById('analyzeAudioBtn');
 const clearAudioBtn = document.getElementById('clearAudioBtn');
 const audioPreview = document.getElementById('audioPreview');
 const audioMeta = document.getElementById('audioMeta');
+const moduleWarning = document.getElementById('moduleWarning');
 const sendToRobotBtn = document.getElementById('sendToRobotBtn');
 const robotBaseUrlInput = document.getElementById('robotBaseUrl');
 const robotSendSpeedInput = document.getElementById('robotSendSpeed');
@@ -97,6 +98,12 @@ const state = {
 
 function setStatus(message) {
   statusBox.textContent = message;
+}
+
+function setModuleWarning(message) {
+  if (!moduleWarning) return;
+  moduleWarning.textContent = message || '';
+  moduleWarning.hidden = !message;
 }
 
 function formatApiError(data, fallbackMessage) {
@@ -511,6 +518,25 @@ async function init3D() {
   ];
 
   try {
+    if (!window.WebGLRenderingContext) {
+      throw new Error('This browser does not expose WebGL APIs.');
+    }
+
+    const contextAttributes = {
+      alpha: true,
+      antialias: true,
+      depth: true,
+      stencil: false,
+      powerPreference: 'high-performance',
+    };
+    const webglContext =
+      sceneCanvas.getContext('webgl2', contextAttributes) ||
+      sceneCanvas.getContext('webgl', contextAttributes) ||
+      sceneCanvas.getContext('experimental-webgl', contextAttributes);
+    if (!webglContext) {
+      throw new Error('Could not create a WebGL context (webgl2/webgl/experimental-webgl).');
+    }
+
     let threeModule = null;
     let controlsModule = null;
     let loadedFrom = null;
@@ -542,7 +568,13 @@ async function init3D() {
     THREE = threeModule;
     const { OrbitControls } = controlsModule;
 
-    renderer = new THREE.WebGLRenderer({ canvas: sceneCanvas, antialias: true, alpha: true });
+    renderer = new THREE.WebGLRenderer({
+      canvas: sceneCanvas,
+      context: webglContext,
+      antialias: true,
+      alpha: true,
+      powerPreference: 'high-performance',
+    });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(sceneCanvas.clientWidth, sceneCanvas.clientHeight, false);
 
@@ -632,11 +664,14 @@ async function init3D() {
     }
 
     threeReady = true;
+    setModuleWarning('');
     resizeRenderer();
     setStatus(`3D preview connected (${loadedFrom}).`);
   } catch (err) {
     console.warn('3D module unavailable; running without 3D scene.', err);
     init2DFallback();
+    const reason = err?.message ? ` Reason: ${err.message}` : '';
+    setModuleWarning(`3D preview is unavailable on this browser/device.${reason} The 2D fallback is active.`);
     setStatus('3D module failed to load (local/CDN unavailable). 2D preview remains available.');
   }
 }
