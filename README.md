@@ -120,6 +120,8 @@ This script installs `three@0.164.1` via npm in a temp directory and copies only
 - `three.module.js`
 - `OrbitControls.js`
 
+During install, it also rewrites `OrbitControls.js` to import the local `three.module.js` path (instead of bare specifier `three`), so browser import-map settings are not required.
+
 into:
 - `static/vendor/three/build/three.module.js`
 - `static/vendor/three/examples/jsm/controls/OrbitControls.js`
@@ -127,6 +129,8 @@ into:
 Then restart Flask and reload the page.
 
 If local files are missing and CDNs are blocked, the app degrades to 2D preview mode.
+
+If you still see `3D module failed to load (local/CDN unavailable)` after vendoring, hard-refresh once to clear any cached failed module imports.
 
 ## Tests
 
