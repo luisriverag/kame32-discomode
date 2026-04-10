@@ -16,16 +16,19 @@ class AudioAnalysisTests(unittest.TestCase):
         self.client = app.test_client()
 
     def test_mp3_upload_succeeds(self):
-        mp3_data = Path('song.mp3').read_bytes()
-        response = self.client.post(
-            '/api/analyze-audio',
-            data={'audio': (io.BytesIO(mp3_data), 'song.mp3')},
-            content_type='multipart/form-data',
-        )
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json()
-        self.assertGreater(payload['event_count'], 5)
-        self.assertEqual(payload['events'][0]['payload'], 'Start')
+        sample_songs = ['song_backtofuture.mp3', 'song_bladerunner.mp3']
+        for filename in sample_songs:
+            with self.subTest(filename=filename):
+                mp3_data = Path(filename).read_bytes()
+                response = self.client.post(
+                    '/api/analyze-audio',
+                    data={'audio': (io.BytesIO(mp3_data), filename)},
+                    content_type='multipart/form-data',
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.get_json()
+                self.assertGreater(payload['event_count'], 5)
+                self.assertEqual(payload['events'][0]['payload'], 'Start')
 
     def test_silent_audio_uses_fallback_beats(self):
         sr = 22050

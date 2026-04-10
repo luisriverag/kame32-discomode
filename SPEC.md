@@ -107,6 +107,7 @@ Main frontend responsibilities:
 - and remain usable when primary Three.js CDN loading fails.
 
 Current viewer layout detail:
+- a full-width **Kame32 Disco Mode school** strip sits above the three-column layout and communicates the intended flow: load MP3 → visualize → send to robot.
 - transport/progress meter and servo chips are shown at the **top** of the viewer pane.
 - status box is offset below the meter to avoid overlap.
 

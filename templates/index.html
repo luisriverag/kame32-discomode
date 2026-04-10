@@ -24,6 +24,16 @@
       background: var(--bg);
       color: var(--text);
     }
+    .school-banner {
+      padding: 16px 16px 0;
+    }
+    .school-card {
+      max-width: 1500px;
+      margin: 0 auto 14px;
+    }
+    .school-card h2 {
+      margin-top: 0;
+    }
     .layout {
       display: grid;
       grid-template-columns: 360px minmax(0, 1fr) 360px;
@@ -234,6 +244,17 @@
   </style>
 </head>
 <body>
+  <section class="school-banner">
+    <div class="card school-card">
+      <h2>Kame32 Disco Mode school</h2>
+      <div class="workflow">
+        <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
+        <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
+        <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Send timeline directly to Kame at <code>192.168.4.1</code>.</div>
+      </div>
+    </div>
+  </section>
+
   <div class="layout">
     <aside class="sidebar">
       <h1>Kame32 DiscoMode</h1>
@@ -354,14 +375,6 @@
 
     <main class="viewer">
       <div class="meter">
-        <div class="card" style="margin-bottom: 12px;">
-          <h2>Kame32 Disco Mode school</h2>
-          <div class="workflow">
-            <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
-            <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
-            <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Send timeline directly to Kame at <code>192.168.4.1</code>.</div>
-          </div>
-        </div>
         <div class="meter-grid">
           <div>
             <input id="transportSlider" type="range" min="0" max="12" step="0.01" value="0">

@@ -11,6 +11,7 @@ A small Flask web app that previews Kame32 movements in 3D.
 - Event timeline JSON import
 - Keyframe JSON import with interpolation
 - MP3/audio upload that analyzes beats and auto-builds a dance event timeline for preview
+- "Kame32 Disco Mode school" 3-step workflow strip pinned above the three-column editor/view/send layout
 - Optional browser audio playback synced to the preview timeline
 - Quick playback presets for 100%, 50%, and 25% speed, with music and move timing slowed together in audio-sync mode
 - Direct event streaming to Kame over Wi-Fi (`http://192.168.4.1`) after preview
@@ -29,6 +30,11 @@ python app.py
 Then open http://127.0.0.1:5000
 
 ## MP3 workflow
+
+At the very top of the page (above all three columns), the **Kame32 Disco Mode school** strip highlights the intended order:
+1. **Load MP3**
+2. **Visualize**
+3. **Send to robot**
 
 1. Open the app in your browser.
 2. In **Load MP3 and auto-build dance**, pick an MP3.
