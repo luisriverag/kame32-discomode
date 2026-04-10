@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kame32 DiscoMode</title>
+  <title>Train</title>
   <style>
     :root {
       color-scheme: dark;
@@ -246,7 +246,7 @@
 <body>
   <section class="school-banner">
     <div class="card school-card">
-      <h2>Kame32 Disco Mode school</h2>
+      <h1>Kame32 Disco Mode school</h1>
       <div class="workflow">
         <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
         <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
@@ -257,7 +257,7 @@
 
   <div class="layout">
     <aside class="sidebar">
-      <h1>Kame32 DiscoMode</h1>
+      <h1>1. Load & Train</h1>
 
       <div class="card" id="buttonCard" hidden>
         <h2>Button routine</h2>
@@ -286,7 +286,6 @@
       </div>
 
       <div class="card">
-        <h2>Simulation</h2>
         <div class="row3">
           <button id="playBtn" class="primary">Play</button>
           <button id="pauseBtn">Pause</button>
@@ -374,6 +373,8 @@
     </aside>
 
     <main class="viewer">
+      <h1>2. Simulate</h1>
+
       <div class="meter">
         <div class="meter-grid">
           <div>
@@ -395,7 +396,7 @@
     </main>
 
     <aside class="robot-sidebar">
-      <h1>Dance Kame, dance!</h1>
+      <h1>3. Dance Kame, dance!</h1>
       <div class="card" id="eventsCard">
         <h2>Event timeline JSON</h2>
         <p class="tiny">Paste an array of events using the same shape as the MP3 script: <code>{"t": 1.2, "kind": "joystick", "payload": [0, 70]}</code>.</p>
