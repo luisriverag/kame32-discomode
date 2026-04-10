@@ -26,14 +26,18 @@
     }
     .layout {
       display: grid;
-      grid-template-columns: 420px 1fr;
+      grid-template-columns: 360px minmax(0, 1fr) 360px;
       min-height: 100vh;
     }
-    .sidebar {
+    .sidebar, .robot-sidebar {
       border-right: 1px solid var(--border);
       background: linear-gradient(180deg, #111923, #0d141b);
       overflow-y: auto;
       padding: 20px;
+    }
+    .robot-sidebar {
+      border-right: 0;
+      border-left: 1px solid var(--border);
     }
     .viewer {
       position: relative;
@@ -207,7 +211,7 @@
     @media (max-width: 1100px) {
       .layout { grid-template-columns: 1fr; }
       .viewer, #scene { min-height: 70vh; height: 70vh; }
-      .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+      .sidebar, .robot-sidebar { border-right: 0; border-left: 0; border-bottom: 1px solid var(--border); }
       .workflow { grid-template-columns: 1fr; }
     }
   </style>
@@ -216,15 +220,6 @@
   <div class="layout">
     <aside class="sidebar">
       <h1>Kame32 DiscoMode</h1>
-
-      <div class="card">
-        <h2>Quick workflow</h2>
-        <div class="workflow">
-          <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
-          <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
-          <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Send timeline directly to Kame at <code>192.168.4.1</code>.</div>
-        </div>
-      </div>
 
       <div class="card" id="buttonCard" hidden>
         <h2>Button routine</h2>
@@ -250,10 +245,6 @@
         <audio id="audioPreview" controls hidden preload="metadata" playsinline style="width: 100%; margin-top: 10px;"></audio>
         <p class="tiny" id="audioMeta">Choose an MP3, then the server will extract beats and load an event timeline for preview.</p>
         <div id="moduleWarning" class="notice" hidden></div>
-        <div class="row" style="margin-top: 10px;">
-          <button id="openSendPanelBtn">Open send-to-robot panel</button>
-          <div class="tiny">If you cannot find the send button, this jumps directly to the Event timeline panel.</div>
-        </div>
       </div>
 
       <div class="card">
@@ -333,7 +324,47 @@
         <div class="servo-grid" id="servoSliders"></div>
       </div>
 
-      <div class="card" id="eventsCard" hidden>
+      <div class="card" id="keyframesCard" hidden>
+        <h2>Keyframe JSON</h2>
+        <p class="tiny">Paste <code>[{"t":0,"pose":{"s0":90,...}}, ...]</code>. The preview interpolates between frames.</p>
+        <textarea id="keyframesJson"></textarea>
+        <div class="row" style="margin-top: 10px;">
+          <button id="loadKeyframesBtn" class="primary">Load keyframes</button>
+          <button id="demoKeyframesBtn">Load demo</button>
+        </div>
+      </div>
+
+    </aside>
+
+    <main class="viewer">
+      <canvas id="scene"></canvas>
+      <div class="status" id="statusBox">Ready.</div>
+      <div class="meter">
+        <div class="card" style="margin-bottom: 12px;">
+          <h2>Quick workflow</h2>
+          <div class="workflow">
+            <div id="workflowAnalyze" class="workflow-step active"><strong>1) Load MP3</strong><br>Choose a song and run analysis.</div>
+            <div id="workflowVisualize" class="workflow-step"><strong>2) Visualize</strong><br>Preview timing/moves in 3D and adjust speed.</div>
+            <div id="workflowSend" class="workflow-step"><strong>3) Send to robot</strong><br>Send timeline directly to Kame at <code>192.168.4.1</code>.</div>
+          </div>
+        </div>
+        <div class="meter-grid">
+          <div>
+            <input id="transportSlider" type="range" min="0" max="12" step="0.01" value="0">
+            <div class="range-readout" id="servoReadout"></div>
+          </div>
+          <div>
+            <div class="tiny">Time</div>
+            <div id="timeLabel" style="font-size: 1.5rem; font-weight: 700;">0.00s</div>
+            <div id="durationLabel" class="tiny">Duration 12.00s</div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <aside class="robot-sidebar">
+      <h1>Robot panel</h1>
+      <div class="card" id="eventsCard">
         <h2>Event timeline JSON</h2>
         <p class="tiny">Paste an array of events using the same shape as the MP3 script: <code>{"t": 1.2, "kind": "joystick", "payload": [0, 70]}</code>.</p>
         <textarea id="eventsJson"></textarea>
@@ -362,50 +393,7 @@
           <div class="tiny">Sends events in real-time order to <code>/joystick</code> and <code>/button</code> on your Kame HTTP firmware.</div>
         </div>
       </div>
-
-      <div class="card" id="keyframesCard" hidden>
-        <h2>Keyframe JSON</h2>
-        <p class="tiny">Paste <code>[{"t":0,"pose":{"s0":90,...}}, ...]</code>. The preview interpolates between frames.</p>
-        <textarea id="keyframesJson"></textarea>
-        <div class="row" style="margin-top: 10px;">
-          <button id="loadKeyframesBtn" class="primary">Load keyframes</button>
-          <button id="demoKeyframesBtn">Load demo</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Servo map used here</h2>
-        <ul>
-          <li>s0 front-left hip</li>
-          <li>s1 front-right hip</li>
-          <li>s2 front-left knee</li>
-          <li>s3 front-right knee</li>
-          <li>s4 rear-right hip</li>
-          <li>s5 rear-left hip</li>
-          <li>s6 rear-left knee</li>
-          <li>s7 rear-right knee</li>
-        </ul>
-        <p class="tiny">The hip/knee split comes directly from the firmware. The leg labels are a practical preview mapping you can adjust inside <code>static/app.js</code> if your physical build differs.</p>
-      </div>
     </aside>
-
-    <main class="viewer">
-      <canvas id="scene"></canvas>
-      <div class="status" id="statusBox">Ready.</div>
-      <div class="meter">
-        <div class="meter-grid">
-          <div>
-            <input id="transportSlider" type="range" min="0" max="12" step="0.01" value="0">
-            <div class="range-readout" id="servoReadout"></div>
-          </div>
-          <div>
-            <div class="tiny">Time</div>
-            <div id="timeLabel" style="font-size: 1.5rem; font-weight: 700;">0.00s</div>
-            <div id="durationLabel" class="tiny">Duration 12.00s</div>
-          </div>
-        </div>
-      </div>
-    </main>
   </div>
   <script type="module" src="{{ url_for('static', filename='app.js') }}"></script>
   <script>
@@ -422,7 +410,6 @@
       const statusBox = document.getElementById('statusBox');
       const moduleWarning = document.getElementById('moduleWarning');
       const sendToRobotBtn = document.getElementById('sendToRobotBtn');
-      const openSendPanelBtn = document.getElementById('openSendPanelBtn');
 
       if (!audioFile || !analyzeBtn || !audioMeta) return;
 
@@ -467,10 +454,6 @@
 
       analyzeBtn.addEventListener('click', runFallbackAnalyze);
       audioFile.addEventListener('change', runFallbackAnalyze);
-      openSendPanelBtn?.addEventListener('click', () => {
-        warn('The advanced timeline/send workflow needs the main app module. Check browser console/network for blocked CDN imports.');
-        setStatus('Main app module failed to load, so send/preview controls are disabled.');
-      });
       sendToRobotBtn?.addEventListener('click', (event) => {
         event.preventDefault();
         warn('Send-to-robot is disabled in fallback mode. Resolve module loading first, then reload this page.');

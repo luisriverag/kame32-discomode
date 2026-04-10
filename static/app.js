@@ -33,7 +33,6 @@ const demoKeyframesBtn = document.getElementById('demoKeyframesBtn');
 const audioFile = document.getElementById('audioFile');
 const analyzeAudioBtn = document.getElementById('analyzeAudioBtn');
 const clearAudioBtn = document.getElementById('clearAudioBtn');
-const openSendPanelBtn = document.getElementById('openSendPanelBtn');
 const audioPreview = document.getElementById('audioPreview');
 const audioMeta = document.getElementById('audioMeta');
 const sendToRobotBtn = document.getElementById('sendToRobotBtn');
@@ -47,7 +46,6 @@ const panels = {
   joystick: document.getElementById('joystickCard'),
   button: document.getElementById('buttonCard'),
   pose: document.getElementById('poseCard'),
-  events: document.getElementById('eventsCard'),
   keyframes: document.getElementById('keyframesCard'),
 };
 
@@ -1060,13 +1058,6 @@ demoKeyframesBtn.addEventListener('click', async () => {
 
 analyzeAudioBtn.addEventListener('click', analyzeSelectedAudio);
 clearAudioBtn.addEventListener('click', clearAudioState);
-openSendPanelBtn.addEventListener('click', () => {
-  modeSelect.value = 'events';
-  setMode('events');
-  panels.events?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  setWorkflowStage('send');
-  setStatus('Opened Event timeline panel. Use "Send timeline to robot" there.');
-});
 
 async function startAudioPlaybackForRobotSend() {
   if (!audioPreview.src || audioPreview.hidden) return false;
