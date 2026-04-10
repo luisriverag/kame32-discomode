@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import socket
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -235,8 +236,11 @@ def _normalize_robot_base_url(value: str | None) -> str:
 def _http_robot_get(base_url: str, path: str, params: dict) -> int:
     query = urlencode(params)
     url = f'{base_url}{path}?{query}'
-    with urlopen(url, timeout=ROBOT_CALL_TIMEOUT_SEC) as response:
-        return int(getattr(response, 'status', 200))
+    try:
+        with urlopen(url, timeout=ROBOT_CALL_TIMEOUT_SEC) as response:
+            return int(getattr(response, 'status', 200))
+    except (TimeoutError, socket.timeout) as err:
+        raise URLError(f'timed out contacting {url}') from err
 
 
 def _validate_send_speed(raw_value: object) -> float:
@@ -427,7 +431,16 @@ def send_to_robot():
     future = _ROBOT_EXECUTOR.submit(_send_event_timeline_to_robot, events, base_url, send_speed)
     try:
         result = future.result(timeout=ROBOT_MAX_SCRIPT_SECONDS + 15.0)
-    except FutureTimeoutError:
+    except FutureTimeoutError as err:
+        if future.done():
+            app.logger.exception('Robot dispatch network timeout for %s events to %s', len(events), base_url)
+            return _error_response(
+                f'Could not reach robot at {base_url}. Check Wi-Fi and power.',
+                502,
+                code='robot_unreachable',
+                details=str(err),
+            )
+        future.cancel()
         app.logger.exception('Robot dispatch timed out for %s events to %s', len(events), base_url)
         return _error_response('Robot dispatch timed out.', 504, code='robot_dispatch_timeout', details=f'Timeline execution exceeded {ROBOT_MAX_SCRIPT_SECONDS + 15.0:.0f}s timeout.')
     except URLError as err:
