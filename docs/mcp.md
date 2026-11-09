@@ -1,6 +1,6 @@
 # MCP integration
 
-The MCP server exposes DanceMode and TeachMoves through the official Python MCP SDK. Flask remains the single application backend: MCP calls the running app over loopback rather than creating a second robot executor. Both stdio and Streamable HTTP are supported.
+The MCP server exposes DanceMode and TeachMoves through the official Python MCP SDK. Flask remains the single application backend: MCP calls the running app over loopback or an explicitly trusted private Docker service host, preserving one robot executor. Both stdio and Streamable HTTP are supported.
 
 ## Install and run
 
@@ -8,7 +8,7 @@ From the repository directory, activate your Python environment and install the 
 
 ```bash
 python -m pip install -r requirements-mcp.txt
-export NUMBA_CACHE_DIR=/workspace/.cache/kame32-numba
+export NUMBA_CACHE_DIR="$PWD/.cache/numba"
 python app.py
 ```
 
@@ -41,7 +41,7 @@ Example client configuration (replace paths with your checkout and interpreter):
 
 `KAME32_APP_URL` must be a loopback HTTP(S) origin by default; an administrator can explicitly allow a private app hostname with `KAME32_TRUSTED_APP_HOSTS` (comma-separated exact hostnames). Compose sets this to `app` for service networking; default is `http://127.0.0.1:5000`. `KAME32_AUDIO_DIR` defaults to the checkout and limits which local files `analyze_audio` can read, including resolved symlinks. Audio files are limited to 49 MiB to allow multipart overhead under Flask's 50 MiB request cap.
 
-Both servers bind to loopback. There is no authentication layer: keep them restricted to trusted local clients and do not expose the HTTP endpoint publicly. For a remote MCP client, use an authenticated deployment or tunnel managed outside this app. This implementation does not include remote OAuth.
+Source launches bind to loopback. Docker binds inside its containers and publishes host ports only on loopback. There is no authentication layer: keep them restricted to trusted local clients and do not expose the HTTP endpoint publicly. For a remote MCP client, use an authenticated deployment or tunnel managed outside this app. This implementation does not include remote OAuth.
 
 ## Tools
 
@@ -52,7 +52,7 @@ Both servers bind to loopback. There is no authentication layer: keep them restr
 | `analyze_audio` | Analyze a file under the configured audio directory; returns events without dispatch |
 | `validate_timeline` | Backend validation and safety-boundary checks in dry-run mode |
 | `dispatch_robot` | **Live hardware motion**, using the app's configured origins and dispatch slot |
-| `validate_move`, `dispatch_move` | Dry-run or explicitly stream a saved servo move; live playback requires the upgraded firmware |
+| `validate_move`, `dispatch_move` | Validate or dispatch a saved move; stock mode uses saved native commands, while pose mode requires upgraded firmware |
 | `cancel_robot_dispatch` | Request cancellation of the active app timeline; worker attempts neutral/Stop |
 | `list_moves`, `get_move` | Read shared recordings |
 | `save_move`, `delete_move` | Replace or delete Move1–Move6; server validates keyframes |
@@ -82,7 +82,7 @@ Call `control_browser(client_id, action, arguments)` with:
 
 A returned command ID means **queued**, not completed. Poll `get_browser_command` until a terminal status. Invalid action arguments are reported as failed by the browser. Commands are delivered once and expire after 30 seconds without acknowledgment. Disconnects can leave an uncertain result; inspect browser state before retrying changes. History lasts five minutes and does not survive app restart. There are at most 32 registered tabs, 64 outstanding commands, and 512 retained commands.
 
-Example teaching sequence: get_status → select_move → set_pose → record → set_pose → stop_recording → get_move → load_move → play. Verify each acknowledgment before proceeding. Recording is capped at 60 seconds; Stop saves the selected slot to the server. Recorded keyframes can be sent explicitly with `dispatch_move` after installing the pose/watchdog firmware. Stock firmware is rejected before pose motion. See FIRMWARE.md for the reproducible patch and physical acceptance checks.
+Example teaching sequence: get_status → select_move → set_pose → record → set_pose → stop_recording → get_move → load_move → play. Verify each acknowledgment before proceeding. Recording is capped at 60 seconds; Stop saves the selected slot to the server. Recorded keyframes can be sent explicitly with `dispatch_move` after installing the pose/watchdog firmware. Stock firmware is rejected before pose motion. See [firmware](firmware.md) for the reproducible patch and physical acceptance checks.
 
 ## Storage, resources, and prompts
 
@@ -102,4 +102,4 @@ python -m unittest discover -s tests -v
 
 `save_move` accepts optional `events` containing recorded stock joystick/button commands. `validate_move` and `dispatch_move` accept `playback_mode`: `auto` (prefer upgraded poses, fall back to saved commands), `stock` (requires commands), or `pose` (requires upgraded firmware). Stock playback has no on-device watchdog and may drift while its HTTP routines block. Manual poses are never approximated into stock commands.
 
-The Docker stack runs the app and Streamable HTTP MCP together. See DOCKER.md for persistent volumes, loopback ports, and the stdio `docker compose exec -T` option.
+The Docker stack runs the app and Streamable HTTP MCP together. See [Docker](docker.md) for persistent volumes, loopback ports, and the stdio `docker compose exec -T` option.

@@ -27,7 +27,7 @@ The services use normal Compose networking. MCP trusts the explicit `app` servic
 - One Gunicorn worker with eight threads. Keep **one app container and one worker**: robot dispatch/cancellation/browser command state is process-local.
 - MCP has its own process and real MCP initialization/connectivity health check. The app health check makes an HTTP request.
 - `moves` volume persists SQLite recordings and their stock command tracks; `cache` holds the Numba cache; `audio` holds audio available to MCP. Bundled sample MP3s seed the audio volume on first creation.
-- No Docker socket or device is mounted. This stack does not flash firmware. The firmware patch/build instructions are in FIRMWARE.md.
+- No Docker socket or device is mounted. This stack does not flash firmware. The firmware patch/build instructions are in firmware.md.
 
 Add audio through the writable app mount (the MCP mount is read-only):
 
@@ -75,8 +75,8 @@ docker compose exec -T app python -m unittest discover -s tests -v
 docker compose exec -T mcp python docker/healthcheck.py mcp
 ```
 
-Hardware dispatch is not part of these tests. Physical motion/watchdog acceptance still needs a supported, calibrated robot as described in FIRMWARE.md.
+Hardware dispatch is not part of these tests. Physical motion/watchdog acceptance still needs a supported, calibrated robot as described in firmware.md.
 
 ## Analysis containment
 
-Audio uploads run in a disposable worker process with one admitted analysis, CPU/address-space/wall-time limits, and bounded decoded duration. Robot dispatch is separate from that process. See README.md for the exact budgets. The Linux Docker runtime enforces the worker limits; they are not a guarantee of physical watchdog timing.
+Audio uploads run in a disposable worker process with one admitted analysis, CPU/address-space/wall-time limits, and bounded decoded duration. Robot dispatch is separate from that process. See [the audio budgets](api.md#audio-analysis-budgets) for the exact limits. The Linux Docker runtime enforces the worker limits; they are not a guarantee of physical watchdog timing.

@@ -6,7 +6,7 @@ TeachMoves can stream its recorded servo keyframes to an upgraded Kame32. The st
 
 Upstream: https://github.com/javierih/kame32, base commit `8f33e489f7425747ab62aeb509777a06d2f14f3e`.
 
-The modified checkout for this task is `/workspace/kame32-firmware`. The portable patch is [firmware/kame32-pose-watchdog.patch](firmware/kame32-pose-watchdog.patch); upstream licensing/attribution is retained in that directory. Apply it to a fresh checkout at the pinned base:
+The portable [patch](../firmware/kame32-pose-watchdog.patch) and [upstream license](../firmware/LICENSE.kame32) are checked into this repository. Apply to a fresh pinned upstream checkout:
 
 ```bash
 git clone https://github.com/javierih/kame32.git kame32-firmware
@@ -14,14 +14,14 @@ cd kame32-firmware
 git checkout 8f33e489f7425747ab62aeb509777a06d2f14f3e
 git apply --check /path/to/kame32-discomode/firmware/kame32-pose-watchdog.patch
 git apply /path/to/kame32-discomode/firmware/kame32-pose-watchdog.patch
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install platformio
+cd code
+pio run -e gamepad -e calibration -j 2
 ```
 
-Use a separate Python environment for PlatformIO. In this cloud workspace, PlatformIO is installed at `/workspace/.venvs/kame-firmware/bin/pio`:
-
-```bash
-cd /workspace/kame32-firmware/code
-PLATFORMIO_CORE_DIR=/workspace/.platformio /workspace/.venvs/kame-firmware/bin/pio run -e gamepad -e calibration -j 2
-```
+Replace `/path/to/kame32-discomode` with this app's checkout. Use a separate environment from the app. In restricted cloud machines, set a writable `PLATFORMIO_CORE_DIR` if the default home directory is read-only. See [provenance](firmware-assets.md).
 
 Both targets use the existing pinned ESP32 platform 6.13.0 and Arduino framework. Calibration remains a separate image; the new HTTP/watchdog features are in **gamepad**. Flashing requires a connected ESP32 and the correct serial port. The following is an example command, not a step executed during this task:
 
