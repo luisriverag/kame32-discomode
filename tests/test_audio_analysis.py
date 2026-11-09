@@ -88,7 +88,7 @@ class AudioAnalysisTests(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload['ok'])
         self.assertEqual(payload['mode'], 'dry_run')
-        # Safe bookends add an early neutral joystick event when one is missing.
+        # Boundary normalization adds an initial neutral joystick event.
         self.assertEqual(payload['event_count'], 5)
         self.assertEqual(payload['send_speed'], 1.0)
 
@@ -155,8 +155,8 @@ class AudioAnalysisTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        # Safe bookends add a Start and early neutral joystick event.
-        self.assertEqual(payload['event_count'], 4)
+        # Boundary normalization adds initial Start/neutral and terminal neutral.
+        self.assertEqual(payload['event_count'], 5)
 
     def test_send_to_robot_network_error_includes_code_and_details(self):
         events = [
@@ -191,7 +191,7 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertEqual(payload['code'], 'robot_unreachable')
         self.assertIn('timed out', payload['details'])
 
-    def test_send_to_robot_unexpected_error_includes_debug_details(self):
+    def test_send_to_robot_unexpected_error_hides_debug_details(self):
         events = [
             {'t': 0.0, 'kind': 'button', 'payload': 'Start'},
             {'t': 0.1, 'kind': 'button', 'payload': 'Stop'},
@@ -205,7 +205,7 @@ class AudioAnalysisTests(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
         payload = response.get_json()
         self.assertEqual(payload['code'], 'robot_dispatch_failed')
-        self.assertIn('RuntimeError', payload['details'])
+        self.assertNotIn('details', payload)
 
     def test_validate_send_speed_defaults_and_bounds(self):
         self.assertEqual(_validate_send_speed(None), 1.0)

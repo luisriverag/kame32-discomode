@@ -1,0 +1,38 @@
+services:
+  app:
+    build: .
+    image: kame32-discomode:local
+    ports:
+      - "127.0.0.1:${KAME32_WEB_PORT:-5000}:5000"
+    environment:
+      KAME32_ROBOT_ORIGINS: "${KAME32_ROBOT_ORIGINS:-http://192.168.4.1}"
+    volumes:
+      - moves:/data
+      - cache:/cache
+      - audio:/audio
+    restart: unless-stopped
+  mcp:
+    image: kame32-discomode:local
+    pull_policy: never
+    ports:
+      - "127.0.0.1:${KAME32_MCP_PORT:-8000}:8000"
+    environment:
+      KAME32_APP_URL: http://app:5000
+      KAME32_TRUSTED_APP_HOSTS: app
+    depends_on:
+      app:
+        condition: service_healthy
+        restart: true
+    command: ["python", "mcp_server.py", "--transport", "streamable-http", "--host", "0.0.0.0"]
+    volumes:
+      - audio:/audio:ro
+    healthcheck:
+      test: ["CMD", "python", "docker/healthcheck.py", "mcp"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+    restart: unless-stopped
+volumes:
+  moves:
+  cache:
+  audio:

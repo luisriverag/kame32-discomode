@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+import json
 import logging
 import os
 import random
@@ -11,16 +13,20 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from io import StringIO
 from pathlib import Path
 from urllib.error import URLError
-from urllib.parse import urlencode
-from urllib.request import urlopen
+from threading import Event, BoundedSemaphore, Lock
+from urllib.parse import urlencode, urlsplit
+from urllib.request import build_opener, HTTPRedirectHandler
 
 import librosa
 import numpy as np
 from flask import Flask, jsonify, render_template, request
 from werkzeug.utils import secure_filename
+from audio_process import analyze_in_process, AnalysisBusy, AnalysisTimeout
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+
+from control_api import register_control_api
 
 
 def _resolve_log_level(raw_level: str | None) -> int:
@@ -44,9 +50,16 @@ ROBOT_MAX_SCRIPT_SECONDS = 600.0
 ROBOT_CALL_TIMEOUT_SEC = 3.0
 ROBOT_MIN_SEND_SPEED = 0.25
 ROBOT_MAX_SEND_SPEED = 1.0
-ROBOT_SAFE_NEUTRAL_JOYSTICK_AT_SEC = 0.15
 
 _ROBOT_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_ROBOT_SLOT = BoundedSemaphore(1)
+_ROBOT_STATE_LOCK = Lock()
+_ACTIVE_ROBOT_CANCEL = None
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def _error_response(message: str, status: int, *, code: str | None = None, details: str | None = None):
@@ -97,7 +110,12 @@ DEMO_ROUTINES = {
 
 @app.get('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', page='DanceMode')
+
+
+@app.get('/teach-moves')
+def teach_moves():
+    return render_template('index.html', page='TeachMoves')
 
 
 @app.get('/api/presets')
@@ -228,13 +246,15 @@ def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, flo
 
     decoder_stderr = StringIO()
     with redirect_stderr(decoder_stderr):
-        y, sr = librosa.load(audio_path, sr=22050, mono=True)
+        y, sr = librosa.load(audio_path, sr=22050, mono=True, duration=600)
     decoder_notes = decoder_stderr.getvalue().strip()
     if decoder_notes:
         app.logger.info('Audio decoder notes while loading %s: %s', audio_path, decoder_notes)
     else:
         app.logger.debug('Audio decoder produced no warnings for %s', audio_path)
     duration = float(librosa.get_duration(y=y, sr=sr))
+    if duration > 599:
+        raise ValueError('Audio exceeds the 599-second decoded duration limit.')
 
     hop_length = 512
     y_harmonic, y_percussive = librosa.effects.hpss(y)
@@ -367,19 +387,30 @@ def build_events(audio_path: str, seed: int = 7) -> tuple[list[dict], float, flo
 
 
 def _normalize_robot_base_url(value: str | None) -> str:
-    candidate = (value or ROBOT_DEFAULT_BASE_URL).strip()
-    if not candidate:
-        candidate = ROBOT_DEFAULT_BASE_URL
-    if not candidate.startswith('http://') and not candidate.startswith('https://'):
+    if value is not None and not isinstance(value, str):
+        raise ValueError('base_url must be a string.')
+    candidate = (value or ROBOT_DEFAULT_BASE_URL).strip() or ROBOT_DEFAULT_BASE_URL
+    if '://' not in candidate:
         candidate = f'http://{candidate}'
-    return candidate.rstrip('/')
+    parts = urlsplit(candidate)
+    if (parts.scheme not in {'http', 'https'} or not parts.hostname
+            or parts.username is not None or parts.password is not None
+            or parts.path not in {'', '/'} or parts.query or parts.fragment):
+        raise ValueError('base_url must be an HTTP(S) origin without credentials, path, query, or fragment.')
+    _ = parts.port  # Reject malformed ports.
+    return f'{parts.scheme}://{parts.netloc}'.rstrip('/')
 
 
-def _http_robot_get(base_url: str, path: str, params: dict) -> int:
+def _allowed_robot_origins() -> set[str]:
+    configured = os.getenv('KAME32_ROBOT_ORIGINS', ROBOT_DEFAULT_BASE_URL)
+    return {_normalize_robot_base_url(item) for item in configured.split(',') if item.strip()}
+
+
+def _http_robot_get(base_url: str, path: str, params: dict, *, timeout: float = ROBOT_CALL_TIMEOUT_SEC) -> int:
     query = urlencode(params)
     url = f'{base_url}{path}?{query}'
     try:
-        with urlopen(url, timeout=ROBOT_CALL_TIMEOUT_SEC) as response:
+        with build_opener(_NoRedirect()).open(url, timeout=timeout) as response:
             return int(getattr(response, 'status', 200))
     except (TimeoutError, socket.timeout) as err:
         raise URLError(f'timed out contacting {url}') from err
@@ -387,20 +418,16 @@ def _http_robot_get(base_url: str, path: str, params: dict) -> int:
 
 def _format_robot_network_error(err: BaseException) -> str:
     reason = getattr(err, 'reason', err)
-    if isinstance(reason, TimeoutError):
+    if isinstance(reason, (TimeoutError, socket.timeout)) or str(reason) == 'timed out':
         return 'timed out'
-    if isinstance(reason, socket.timeout):
-        return 'timed out'
-    if isinstance(reason, OSError):
-        if getattr(reason, 'errno', None) == 51:
-            return 'network is unreachable'
-        return reason.strerror or str(reason)
-    return str(reason)
+    return 'Robot network request failed.'
 
 
 def _validate_send_speed(raw_value: object) -> float:
     if raw_value is None:
         return 1.0
+    if isinstance(raw_value, bool):
+        raise ValueError('send_speed must be a number.')
     speed = float(raw_value)
     if not np.isfinite(speed):
         raise ValueError('send_speed must be a finite number.')
@@ -428,12 +455,24 @@ def _validate_robot_events(events: object) -> list[dict]:
             raise ValueError('events must be sorted by ascending "t".')
         last_t = t
 
+        if kind == 'pose':
+            pose = raw.get('payload')
+            if not isinstance(pose, dict) or set(pose) != {f's{i}' for i in range(8)}:
+                raise ValueError('pose payload must contain s0 through s7.')
+            if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v) or not 0 <= v <= 180 for v in pose.values()):
+                raise ValueError('pose angles must be finite numbers between 0 and 180.')
+            normalized.append({'t': t, 'kind': 'pose', 'payload': dict(pose)})
+            continue
+
         if kind == 'joystick':
             payload = raw.get('payload')
             if not isinstance(payload, list) or len(payload) != 2:
                 raise ValueError('joystick payload must be [x, y].')
-            x = int(payload[0])
-            y = int(payload[1])
+            if any(isinstance(v, bool) or not isinstance(v, (int, float))
+                   or not np.isfinite(v) or int(v) != v or not -100 <= v <= 100
+                   for v in payload):
+                raise ValueError('joystick coordinates must be integers between -100 and 100.')
+            x, y = map(int, payload)
             normalized.append({'t': t, 'kind': 'joystick', 'payload': [x, y]})
             continue
 
@@ -452,74 +491,114 @@ def _validate_robot_events(events: object) -> list[dict]:
 
 
 def _with_safe_bookends(events: object) -> list[dict]:
-    if not isinstance(events, list):
-        raise ValueError('events must be a non-empty array.')
-
-    out = [dict(event) if isinstance(event, dict) else event for event in events]
-    if not out:
-        return out
-
-    start_event = {'t': 0.0, 'kind': 'button', 'payload': 'Start'}
-    has_start = any(
-        isinstance(event, dict)
-        and str(event.get('kind', '')).strip().lower() == 'button'
-        and str(event.get('payload', '')).strip() == 'Start'
-        for event in out
-    )
-    if not has_start:
-        out.insert(0, start_event)
-
-    has_neutral_joystick = any(
-        isinstance(event, dict)
-        and str(event.get('kind', '')).strip().lower() == 'joystick'
-        and isinstance(event.get('payload'), list)
-        and len(event.get('payload')) == 2
-        and int(event.get('payload')[0]) == 0
-        and int(event.get('payload')[1]) == 0
-        and float(event.get('t', -1.0)) <= ROBOT_SAFE_NEUTRAL_JOYSTICK_AT_SEC
-        for event in out
-    )
-    if not has_neutral_joystick:
-        out.append({'t': ROBOT_SAFE_NEUTRAL_JOYSTICK_AT_SEC, 'kind': 'joystick', 'payload': [0, 0]})
-
-    has_stop = any(
-        isinstance(event, dict)
-        and str(event.get('kind', '')).strip().lower() == 'button'
-        and str(event.get('payload', '')).strip() == 'Stop'
-        for event in out
-    )
-    if not has_stop:
-        latest_t = max(float(event.get('t', 0.0)) for event in out if isinstance(event, dict))
-        out.append({'t': round(latest_t + 0.1, 3), 'kind': 'button', 'payload': 'Stop'})
-
-    out.sort(key=lambda event: float(event.get('t', 0.0)) if isinstance(event, dict) else 0.0)
-    return out
+    out = _validate_robot_events(events)
+    if out[0] != {'t': 0.0, 'kind': 'button', 'payload': 'Start'}:
+        out.insert(0, {'t': 0.0, 'kind': 'button', 'payload': 'Start'})
+    if any(event['kind'] == 'pose' for event in out):
+        # A joystick-neutral command invokes firmware home(), which would jerk
+        # a pose stream back to the gait home position. Preserve poses until Stop.
+        if out[-1]['kind'] != 'button' or out[-1]['payload'] != 'Stop':
+            out.append({'t': out[-1]['t'], 'kind': 'button', 'payload': 'Stop'})
+        return _validate_robot_events(out)
+    # Insert neutral immediately after Start, before any supplied movement.
+    if len(out) < 2 or out[1]['t'] != 0 or out[1]['kind'] != 'joystick' or out[1]['payload'] != [0, 0]:
+        out.insert(1, {'t': 0.0, 'kind': 'joystick', 'payload': [0, 0]})
+    terminal_stop = out[-1]['kind'] == 'button' and out[-1]['payload'] == 'Stop'
+    if terminal_stop:
+        if out[-2]['kind'] != 'joystick' or out[-2]['payload'] != [0, 0]:
+            out.insert(len(out) - 1, {'t': out[-1]['t'], 'kind': 'joystick', 'payload': [0, 0]})
+    else:
+        end = out[-1]['t']
+        out.extend([{'t': end, 'kind': 'joystick', 'payload': [0, 0]},
+                    {'t': end, 'kind': 'button', 'payload': 'Stop'}])
+    return _validate_robot_events(out)
 
 
-def _send_event_timeline_to_robot(events: list[dict], base_url: str, send_speed: float = 1.0) -> dict:
+def _robot_capabilities(base_url: str) -> dict:
+    from urllib.error import HTTPError
+    try:
+        with build_opener(_NoRedirect()).open(f'{base_url}/capabilities', timeout=ROBOT_CALL_TIMEOUT_SEC) as response:
+            data = json.loads(response.read(4096))
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}  # Some legacy servers render HTML for unknown routes.
+    except HTTPError as error:
+        if error.code == 404:
+            return {}  # Stock firmware supports joystick/button only.
+        raise
+
+
+def _wait_for_dispatch(target: float, cancel: Event, base_url: str, watchdog: bool, last_heartbeat: list, lease: dict) -> None:
+    while True:
+        if cancel.is_set():
+            raise TimeoutError('Dispatch cancelled.')
+        now = time.monotonic()
+        if watchdog and now - last_heartbeat[0] >= 0.25:
+            _http_robot_get(base_url, '/heartbeat', lease)
+            last_heartbeat[0] = time.monotonic()
+        remaining = target - time.monotonic()
+        if remaining <= 0:
+            return
+        if cancel.wait(min(remaining, 0.1 if watchdog else remaining)):
+            raise TimeoutError('Dispatch cancelled.')
+
+
+def _send_event_timeline_to_robot(events: list[dict], base_url: str, send_speed: float = 1.0, cancel: Event | None = None, *, fallback_events: list[dict] | None = None) -> dict:
+    cancel = cancel or Event()
+    capabilities = _robot_capabilities(base_url)
+    pose_stream = any(event['kind'] == 'pose' for event in events)
+    watchdog = capabilities.get('watchdog') is True
+    if pose_stream and not (capabilities.get('pose') is True and watchdog and capabilities.get('lease_token') is True):
+        if fallback_events is None:
+            raise ValueError('This move requires updated firmware. Re-record using joystick/buttons for stock compatibility, or install the pose/watchdog firmware.')
+        events = fallback_events
+        pose_stream = False
+    lease = {'lease': uuid.uuid4().hex} if capabilities.get('lease_token') is True else {}
     start = time.monotonic()
     first_t = float(events[0]['t'])
     dispatches = []
+    last_heartbeat = [start]
 
-    for event in events:
-        target_sec = max(0.0, (float(event['t']) - first_t) / send_speed)
-        elapsed = time.monotonic() - start
-        if target_sec > elapsed:
-            time.sleep(target_sec - elapsed)
+    try:
+        for event in events:
+            target_sec = max(0.0, (float(event['t']) - first_t) / send_speed)
+            _wait_for_dispatch(start + target_sec, cancel, base_url, watchdog, last_heartbeat, lease)
 
-        if event['kind'] == 'joystick':
-            x, y = event['payload']
-            app.logger.debug('Dispatch joystick event t=%.3f x=%s y=%s to %s', float(event['t']), int(x), int(y), base_url)
-            status = _http_robot_get(base_url, '/joystick', {'x': int(x), 'y': int(y)})
-            dispatches.append({'t': event['t'], 'kind': 'joystick', 'payload': [int(x), int(y)], 'status': status})
-        else:
-            label = str(event['payload'])
-            app.logger.debug('Dispatch button event t=%.3f label=%s to %s', float(event['t']), label, base_url)
-            status = _http_robot_get(base_url, '/button', {'label': label})
-            dispatches.append({'t': event['t'], 'kind': 'button', 'payload': label, 'status': status})
+            if event['kind'] == 'pose':
+                status = _http_robot_get(base_url, '/pose', {**event['payload'], **lease})
+                dispatches.append({**event, 'status': status})
+            elif event['kind'] == 'joystick':
+                x, y = event['payload']
+                app.logger.debug('Dispatch joystick event t=%.3f x=%s y=%s to %s', float(event['t']), int(x), int(y), base_url)
+                status = _http_robot_get(base_url, '/joystick', {'x': int(x), 'y': int(y), **lease})
+                dispatches.append({'t': event['t'], 'kind': 'joystick', 'payload': [int(x), int(y)], 'status': status})
+            else:
+                label = str(event['payload'])
+                app.logger.debug('Dispatch button event t=%.3f label=%s to %s', float(event['t']), label, base_url)
+                params = {'label': label, **lease}
+                if pose_stream and label == 'Start':
+                    params['mode'] = 'pose'
+                if not watchdog and label in {'A', 'B', 'C', 'X', 'Y', 'Z'}:
+                    # Stock firmware replies only after its blocking routine finishes.
+                    status = _http_robot_get(base_url, '/button', params, timeout=8.0)
+                else:
+                    status = _http_robot_get(base_url, '/button', params)
+                dispatches.append({'t': event['t'], 'kind': 'button', 'payload': label, 'status': status})
+
+    except Exception:
+        # Try both commands independently; network loss can prevent either.
+        cleanup = [('/button', {'label': 'Stop'})] if pose_stream else [('/joystick', {'x': 0, 'y': 0}), ('/button', {'label': 'Stop'})]
+        for path, params in cleanup:
+            try:
+                _http_robot_get(base_url, path, {**params, **lease})
+            except Exception:
+                app.logger.warning('Best-effort robot stop failed.', exc_info=True)
+        raise
 
     elapsed_total = time.monotonic() - start
     return {
+        'playback_mode': 'pose' if pose_stream else 'stock',
+        'watchdog_active': watchdog,
         'sent': len(dispatches),
         'elapsed': round(elapsed_total, 3),
         'dispatches': dispatches,
@@ -549,7 +628,7 @@ def analyze_audio():
             upload.save(temp_file)
             temp_path = temp_file.name
 
-        events, tempo, duration = build_events(temp_path)
+        events, tempo, duration = analyze_in_process(temp_path)
         app.logger.info('Analyze complete for %s: tempo=%.2f duration=%.3f event_count=%s', filename, tempo, duration, len(events))
         return jsonify({
             'filename': filename,
@@ -558,6 +637,10 @@ def analyze_audio():
             'events': events,
             'event_count': len(events),
         })
+    except AnalysisBusy:
+        return _error_response('Audio analysis is busy. Retry when the current analysis finishes.', 429, code='audio_analysis_busy')
+    except AnalysisTimeout:
+        return _error_response('Audio analysis exceeded its time budget.', 504, code='audio_analysis_timeout')
     except Exception:
         app.logger.exception('Audio analysis failed for upload %s', filename)
         return _error_response('Audio analysis failed. Verify the file is a valid, non-corrupt audio clip.', 400, code='audio_analysis_failed')
@@ -566,16 +649,47 @@ def analyze_audio():
             os.unlink(temp_path)
 
 
+@app.get('/api/robot/status')
+def robot_status():
+    with _ROBOT_STATE_LOCK:
+        return jsonify(active=_ACTIVE_ROBOT_CANCEL is not None,
+                       cancellation_requested=bool(_ACTIVE_ROBOT_CANCEL and _ACTIVE_ROBOT_CANCEL.is_set()))
+
+
+@app.post('/api/robot/cancel')
+def cancel_robot_dispatch():
+    with _ROBOT_STATE_LOCK:
+        if _ACTIVE_ROBOT_CANCEL is None:
+            return jsonify(active=False, cancellation_requested=False)
+        _ACTIVE_ROBOT_CANCEL.set()
+    return jsonify(active=True, cancellation_requested=True,
+                   message='Cancellation requested; stop delivery is best effort.'), 202
+
+
 @app.post('/api/send-to-robot')
 def send_to_robot():
-    payload = request.get_json(silent=True) or {}
-    base_url = _normalize_robot_base_url(payload.get('base_url'))
-    dry_run = bool(payload.get('dry_run', False))
-    app.logger.info('Send-to-robot request: base_url=%s dry_run=%s', base_url, dry_run)
+    return dispatch_robot_payload(request.get_json(silent=True))
+
+
+def dispatch_robot_payload(payload):
+    global _ACTIVE_ROBOT_CANCEL
     try:
-        events = _validate_robot_events(_with_safe_bookends(payload.get('events')))
+        if not isinstance(payload, dict):
+            raise ValueError('request body must be a JSON object.')
+        base_url = _normalize_robot_base_url(payload.get('base_url'))
+        dry_run = payload.get('dry_run', False)
+        if not isinstance(dry_run, bool):
+            raise ValueError('dry_run must be a boolean.')
+        events = _with_safe_bookends(payload.get('events'))
+        fallback = payload.get('stock_events')
+        if fallback is not None:
+            fallback = _with_safe_bookends(fallback)
+            if any(event['kind'] not in {'joystick', 'button'} for event in fallback):
+                raise ValueError('Stock fallback supports only joystick/button commands.')
+            if fallback[-1]['t'] > events[-1]['t']:
+                raise ValueError('Stock fallback must fit within the primary timeline duration.')
         send_speed = _validate_send_speed(payload.get('send_speed'))
-    except (TypeError, ValueError) as err:
+    except (TypeError, ValueError, OverflowError) as err:
         return _error_response(f'Invalid robot send request: {err}', 400, code='invalid_robot_send_request')
 
     if dry_run:
@@ -585,14 +699,42 @@ def send_to_robot():
             'mode': 'dry_run',
             'base_url': base_url,
             'event_count': len(events),
+            'requires_pose_firmware': any(event['kind'] == 'pose' for event in events) and fallback is None,
+            'stock_compatible': fallback is not None or all(event['kind'] != 'pose' for event in events),
             'timeline_seconds': round(float(events[-1]['t']) - float(events[0]['t']), 3),
             'send_speed': send_speed,
         })
 
-    future = _ROBOT_EXECUTOR.submit(_send_event_timeline_to_robot, events, base_url, send_speed)
+    if base_url not in _allowed_robot_origins():
+        return _error_response('Robot destination is not configured.', 400, code='robot_destination_not_allowed')
+    if not _ROBOT_SLOT.acquire(blocking=False):
+        return _error_response('Robot dispatch is busy.', 409, code='robot_busy')
+    cancel = Event()
+    with _ROBOT_STATE_LOCK:
+        _ACTIVE_ROBOT_CANCEL = cancel
     try:
-        result = future.result(timeout=ROBOT_MAX_SCRIPT_SECONDS + 15.0)
+        options = {'fallback_events': fallback} if fallback is not None else {}
+        future = _ROBOT_EXECUTOR.submit(_send_event_timeline_to_robot, events, base_url, send_speed, cancel, **options)
+    except Exception:
+        with _ROBOT_STATE_LOCK:
+            _ACTIVE_ROBOT_CANCEL = None
+        _ROBOT_SLOT.release()
+        raise
+
+    def finished(_future):
+        global _ACTIVE_ROBOT_CANCEL
+        with _ROBOT_STATE_LOCK:
+            if _ACTIVE_ROBOT_CANCEL is cancel:
+                _ACTIVE_ROBOT_CANCEL = None
+        _ROBOT_SLOT.release()
+
+    future.add_done_callback(finished)
+    deadline = (events[-1]['t'] - events[0]['t']) / send_speed + 15.0
+    try:
+        result = future.result(timeout=deadline)
     except FutureTimeoutError as err:
+        if cancel.is_set():
+            return _error_response('Robot dispatch cancelled; stop delivery is best effort.', 409, code='robot_dispatch_cancelled')
         if future.done():
             detail = _format_robot_network_error(err)
             app.logger.warning('Robot dispatch network timeout to %s: %s', base_url, detail)
@@ -602,9 +744,12 @@ def send_to_robot():
                 code='robot_unreachable',
                 details=detail,
             )
+        cancel.set()
         future.cancel()
         app.logger.warning('Robot dispatch timed out for %s events to %s', len(events), base_url)
-        return _error_response('Robot dispatch timed out.', 504, code='robot_dispatch_timeout', details=f'Timeline execution exceeded {ROBOT_MAX_SCRIPT_SECONDS + 15.0:.0f}s timeout.')
+        return _error_response('Robot dispatch timed out.', 504, code='robot_dispatch_timeout', details='Cancellation requested; hardware stop is best effort.')
+    except ValueError as err:
+        return _error_response(str(err), 400, code='robot_firmware_required')
     except URLError as err:
         detail = _format_robot_network_error(err)
         app.logger.warning('Robot dispatch network error to %s: %s', base_url, detail)
@@ -616,11 +761,13 @@ def send_to_robot():
         )
     except Exception as err:
         app.logger.exception('Robot dispatch failed for %s events to %s', len(events), base_url)
-        return _error_response('Robot dispatch failed unexpectedly.', 500, code='robot_dispatch_failed', details=f'{type(err).__name__}: {err}')
+        return _error_response('Robot dispatch failed unexpectedly.', 500, code='robot_dispatch_failed')
 
     return jsonify({
         'ok': True,
         'mode': 'live',
+        'playback_mode': result.get('playback_mode', 'stock'),
+        'watchdog_active': result.get('watchdog_active', False),
         'base_url': base_url,
         'event_count': len(events),
         'sent': result['sent'],
@@ -628,6 +775,9 @@ def send_to_robot():
         'dispatches': result['dispatches'],
         'send_speed': result['send_speed'],
     })
+
+
+register_control_api(app, dispatch_robot_payload, _with_safe_bookends)
 
 
 if __name__ == '__main__':

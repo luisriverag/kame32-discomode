@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kame32 DanceMode</title>
+  <title>{{ page }}</title>
   <style>
     :root {
       color-scheme: dark;
@@ -213,15 +213,46 @@
       #scene { min-height: 52vh; }
       .sidebar, .robot-sidebar { border-right: 0; border-left: 0; border-bottom: 1px solid var(--border); }
     }
+    nav a { color: var(--muted); text-decoration: none; font-weight: 600; }
+    nav a[aria-current] { color: var(--accent); }
+    .teach-page #audioCard, .teach-page .robot-sidebar { display: none; }
+    .teach-page .layout { grid-template-columns: 360px minmax(0, 1fr); }
+    #macroSlots button[aria-pressed="true"] { border-color: var(--accent); background: #17304f; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    @media (max-width: 1100px) { .teach-page .layout { grid-template-columns: 1fr; } }
   </style>
 </head>
-<body>
+<body class="{{ 'teach-page' if page == 'TeachMoves' else 'dance-page' }}">
 
-  <h1>Kame32 DanceMode</h1>
+  <nav aria-label="Main navigation" style="display:flex; gap:20px; padding:16px; border-bottom:1px solid var(--border)">
+    <a href="/" {% if page == 'DanceMode' %}aria-current="page"{% endif %}>DanceMode</a>
+    <a href="/teach-moves" {% if page == 'TeachMoves' %}aria-current="page"{% endif %}>TeachMoves</a>
+  </nav>
+  <h1>{{ page }}</h1>
 
   <div class="layout">  
     <aside class="sidebar">
-      <h1>1. Load music</h1>
+      {% if page == 'TeachMoves' %}
+      <section class="card" aria-labelledby="teachHeading">
+        <h2 id="teachHeading">Teach a move</h2>
+        <p class="tiny">Choose a slot, then record while adjusting the joystick, routines, or servo sliders. Moves save on this app server and are shared with MCP clients. Preview only; recording does not send to a robot.</p>
+        <div id="macroSlots" class="row3" aria-label="Saved moves"></div>
+        <p id="macroInfo" class="tiny" role="status" aria-live="polite"></p>
+        <div class="row"><button id="recordMacro" class="good">Record macro</button><button id="stopMacro" disabled>Stop recording</button></div>
+        <div class="row" style="margin-top:10px"><button id="playMacro" disabled>Play move</button><button id="deleteMacro" disabled>Delete move</button></div>
+        <label for="teachPlaybackMode">Hardware playback</label>
+        <select id="teachPlaybackMode"><option value="auto">Auto: prefer updated firmware</option><option value="stock">Compatibility: stock firmware</option><option value="pose">Exact servo poses: updated firmware</option></select>
+        <p class="tiny">Stock mode records joystick/buttons with default gait settings. Manual poses need the update. Stock firmware has no disconnect watchdog.</p>
+        <label for="teachRobotOrigin" style="margin-top:10px">Robot origin</label>
+        <input id="teachRobotOrigin" value="http://192.168.4.1" aria-describedby="teachHardwareHelp">
+        <div class="row" style="margin-top:10px"><button id="validateMacro" disabled>Validate for robot</button><button id="sendMacro" class="good" disabled>Send move to robot</button></div>
+        <button id="cancelMacro" style="margin-top:10px">Cancel robot playback</button>
+        <p class="tiny" id="teachHardwareHelp">Exact servo playback requires the pose + watchdog firmware. Compatibility mode replays recorded stock commands. Send physically moves the robot; preview and recording remain local.</p>
+        <button id="useMacro" style="margin-top:10px" disabled>Use in DanceMode</button>
+        <p class="tiny">Stop recording to save before leaving. Recording replaces the selected slot when you stop. Up to 60 seconds per move. Saved moves replay as servo keyframes.</p>
+      </section>
+      {% endif %}
+      <h1>{{ 'Manual controls' if page == 'TeachMoves' else '1. Load music' }}</h1>
 
       <div class="card" id="buttonCard" hidden>
         <h2>Button routine</h2>
@@ -236,7 +267,7 @@
         <p class="tiny">Button routines are visual approximations so you can audition overall motion. Joystick gait is the most faithful mode.</p>
       </div>
 
-      <div class="card">
+      <div class="card" id="audioCard">
         <label for="audioFile">Audio file</label>
         <input id="audioFile" type="file" accept=".mp3,audio/*">
         <div class="row" style="margin-top: 10px;">
@@ -270,7 +301,7 @@
               <option value="button">Button routine</option>
               <option value="pose">Manual pose</option>
               <option value="events">Event timeline JSON</option>
-              <option value="keyframes">Keyframe JSON</option>
+              <option value="keyframes">{{ 'Recorded move / keyframes' if page == 'TeachMoves' else 'Keyframe JSON' }}</option>
             </select>
           </div>
         </div>
@@ -331,7 +362,7 @@
     </aside>
 
     <main class="viewer">
-      <h1>2. Simulate moves</h1>
+      <h1>{{ 'Move preview' if page == 'TeachMoves' else '2. Simulate moves' }}</h1>
 
       <div class="meter">
         <div class="meter-grid">
@@ -454,5 +485,7 @@
       setStatus('3D preview unavailable; fallback analyzer active.');
     }, 1200);
   </script>
+{% if page == 'TeachMoves' %}<script type="module" src="{{ url_for('static', filename='teach.js') }}"></script>{% endif %}
+<script type="module" src="{{ url_for('static', filename='mcp-bridge.js') }}"></script>
 </body>
 </html>

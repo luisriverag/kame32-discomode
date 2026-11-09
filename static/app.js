@@ -985,7 +985,7 @@ function clearAudioState() {
   setStatus('Audio cleared.');
 }
 
-playBtn.addEventListener('click', async () => {
+async function playPreview() {
   if (state.mode === 'events' && state.eventTimeline.length === 0) {
     setStatus('Play is unavailable: event timeline is empty. Analyze audio or load event JSON first.');
     return;
@@ -1013,7 +1013,8 @@ playBtn.addEventListener('click', async () => {
   }
   state.playing = true;
   setStatus('Playing.');
-});
+}
+playBtn.addEventListener('click', playPreview);
 
 pauseBtn.addEventListener('click', () => {
   pauseAnyAudio();
@@ -1074,6 +1075,7 @@ for (const button of document.querySelectorAll('[data-button]')) {
   button.addEventListener('click', () => {
     pauseAnyAudio();
     state.buttonRoutine = button.dataset.button;
+    state.buttonRevision = (state.buttonRevision || 0) + 1;
     state.time = 0;
     state.playing = true;
     setDuration(parseButtonDuration(state.buttonRoutine));
@@ -1232,6 +1234,20 @@ Promise.all([fetchPresets()])
     eventsJson.value = JSON.stringify(state.presets.mp3_style_demo, null, 2);
     keyframesJson.value = JSON.stringify(state.presets.keyframe_groove[0].frames, null, 2);
     setStatus('Ready. Demo presets loaded.');
+    if (!document.getElementById('macroSlots')) {
+      try {
+        const pending = sessionStorage.getItem('kame32.pendingMove');
+        if (pending) {
+          const frames = JSON.parse(pending);
+          if (Array.isArray(frames) && frames.length >= 2) {
+            teaching.play(frames);
+            state.playing = false;
+            setStatus('Recorded move loaded. Press Play to preview.');
+          }
+          sessionStorage.removeItem('kame32.pendingMove');
+        }
+      } catch { setStatus('Could not load the transferred move.'); }
+    }
   })
   .catch((err) => setStatus(`Preset load failed: ${err.message}`));
 
@@ -1242,3 +1258,80 @@ requestAnimationFrame((now) => {
 });
 
 window.__kameAppReady = true;
+
+// TeachMoves shares the renderer and pose engine with DanceMode.
+export const teaching = {
+  pose: () => ({ ...normalizePose(poseForCurrentMode()) }),
+  stockCommand() {
+    if (!state.playing || state.speed !== 1) return null;
+    if (state.mode === 'joystick') {
+      const j = state.joystick;
+      if (j.period !== 450 || j.stepHeight !== 20 || j.legSpread !== 20 || j.bodyHeight !== 10) return null;
+      return { kind: 'joystick', payload: [Math.round(j.x), Math.round(j.y)] };
+    }
+    if (state.mode === 'button') return { kind: 'button', payload: state.buttonRoutine, revision: state.buttonRevision || 0 };
+    return null;
+  },
+  manual() {
+    if (!['pose', 'joystick', 'button'].includes(state.mode)) {
+      setMode('pose');
+      modeSelect.value = 'pose';
+    }
+    state.time = 0;
+    state.playing = true;
+  },
+  play(frames) {
+    keyframesJson.value = JSON.stringify(frames, null, 2);
+    loadJsonIntoMode('keyframes', frames);
+    modeSelect.value = 'keyframes';
+    state.time = 0;
+    state.playing = true;
+    setStatus('Playing recorded move.');
+  },
+};
+
+
+export async function previewCommand(action, args) {
+  if (action === 'get_state') return { ...previewState(), events: state.eventTimeline, keyframes: state.keyframes };
+  if (action === 'set_mode') {
+    if (!['joystick', 'button', 'pose', 'events', 'keyframes'].includes(args.mode)) throw new Error('Invalid preview mode.');
+    setMode(args.mode); modeSelect.value = args.mode;
+  } else if (action === 'set_pose') {
+    const values = servoMeta.map(meta => args.pose?.[meta.key]);
+    if (values.some(v => typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 180)) throw new Error('Pose requires s0–s7 angles between 0 and 180.');
+    state.livePose = { ...args.pose }; setMode('pose'); modeSelect.value = 'pose';
+    document.querySelectorAll('#servoSliders input').forEach((input, index) => { input.value = values[index]; input.dispatchEvent(new Event('input')); });
+  } else if (action === 'set_joystick') {
+    if (![args.x, args.y].every(v => Number.isFinite(v) && v >= -100 && v <= 100)) throw new Error('Joystick x/y must be numbers between -100 and 100.');
+    setMode('joystick'); modeSelect.value = 'joystick';
+    joyX.value = args.x; joyY.value = args.y;
+    joyX.dispatchEvent(new Event('input')); joyY.dispatchEvent(new Event('input'));
+    state.playing = true;
+  } else if (action === 'button') {
+    if (!['A','B','C','X','Y','Z','Stop'].includes(args.label)) throw new Error('Unknown preview routine.');
+    setMode('button'); modeSelect.value = 'button';
+    document.querySelector(`[data-button="${args.label}"]`).click();
+  } else if (action === 'load_events') {
+    const response = await fetch('/api/send-to-robot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ events: args.events, dry_run: true }) });
+    if (!response.ok) throw new Error('Invalid event timeline.');
+    eventsJson.value = JSON.stringify(args.events, null, 2);
+    loadJsonIntoMode('events', args.events); modeSelect.value = 'events'; state.time = 0; state.playing = false;
+  } else if (action === 'load_move') {
+    if (!/^Move[1-6]$/.test(args.name)) throw new Error('Invalid move slot.');
+    const response = await fetch(`/api/moves/${args.name}`); const move = await response.json();
+    if (!response.ok) throw new Error(move.error);
+    teaching.play(move.frames); state.playing = false;
+  } else if (action === 'play') {
+    if (state.mode === 'events' && !state.eventTimeline.length) throw new Error('Event timeline is empty.');
+    await playPreview();
+  } else if (['pause','reset'].includes(action)) {
+    document.getElementById(`${action}Btn`).click();
+  } else {
+    throw new Error('Unsupported preview action.');
+  }
+}
+
+export function previewState() {
+  return { mode: state.mode, playing: state.playing, time: state.time, duration: state.duration,
+    pose: teaching.pose(), event_count: state.eventTimeline.length, keyframe_count: state.keyframes.length };
+}

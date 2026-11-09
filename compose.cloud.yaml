@@ -1,0 +1,15 @@
+# Optional build override for managed environments with TLS-inspecting proxies.
+services:
+  app:
+    secrets:
+      - proxy_ca
+    environment:
+      SSL_CERT_FILE: /run/secrets/proxy_ca
+      REQUESTS_CA_BUNDLE: /run/secrets/proxy_ca
+    build:
+      context: .
+      secrets:
+        - proxy_ca
+secrets:
+  proxy_ca:
+    file: ${KAME32_BUILD_CA:-/etc/ssl/certs/ca-certificates.crt}
